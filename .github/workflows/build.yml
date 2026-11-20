@@ -12,22 +12,23 @@ on:
 
 jobs:
   build:
-    name: Build on Windows
+    name: Build & Test on Windows
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Locate csc.exe
+      - name: Verify csc.exe available
         shell: pwsh
         run: |
           $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
           if (-not (Test-Path $csc)) { throw "csc.exe not found" }
           Write-Host "Found: $csc"
-          & $csc /? 2>&1 | Select-Object -First 2
+
+      - name: Run unit tests
+        shell: cmd
+        run: test.cmd
 
       - name: Build
         shell: cmd
@@ -38,8 +39,14 @@ jobs:
         run: |
           if (-not (Test-Path "LarkSender.exe")) { throw "LarkSender.exe not produced" }
           $size = (Get-Item "LarkSender.exe").Length
-          Write-Host "LarkSender.exe built: $([math]::Round($size/1KB,1)) KB"
-          if ($size -lt 50KB) { throw "exe suspiciously small: $size bytes" }
+          Write-Host "LarkSender.exe: $([math]::Round($size/1KB,1)) KB"
+          if ($size -lt 80KB) { throw "exe suspiciously small: $size bytes" }
+          # 确认是 GUI 子系统（无控制台窗口）
+          $bytes = [IO.File]::ReadAllBytes("LarkSender.exe")
+          $pe = [BitConverter]::ToInt32($bytes, 0x3C)
+          $sub = [BitConverter]::ToUInt16($bytes, $pe + 0x5C)
+          if ($sub -ne 2) { throw "expected GUI subsystem (2), got $sub" }
+          Write-Host "PE subsystem = $sub (GUI) OK"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -1,4 +1,4 @@
-// 生成应用图标 icon.ico（多尺寸：16/32/48/64/128/256）
+﻿// 生成应用图标 icon.ico（多尺寸：16/32/48/64/128/256）
 // 设计：蓝色圆角方块 + 白色对话气泡 + 青绿点缀，简洁现代
 using System;
 using System.Collections.Generic;

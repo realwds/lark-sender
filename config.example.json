@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "groups": [
     {
       "name": "示例群",
@@ -9,5 +9,9 @@
       "note": "把 webhook 换成你自己的群机器人地址"
     }
   ],
-  "schedules": []
+  "schedules": [],
+  "templates": [
+    "今天的进展已同步到看板，有问题随时找我。",
+    "服务已发布完成，请验证。"
+  ]
 }
