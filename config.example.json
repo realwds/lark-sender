@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "name": "示例群",
+      "webhook": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+      "secret": "",
+      "atAll": false,
+      "note": "把 webhook 换成你自己的群机器人地址"
+    }
+  ],
+  "schedules": []
+}

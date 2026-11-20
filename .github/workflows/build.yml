@@ -1,0 +1,51 @@
+name: build
+
+on:
+  push:
+    branches: [ main, master ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Locate csc.exe
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { throw "csc.exe not found" }
+          Write-Host "Found: $csc"
+          & $csc /? 2>&1 | Select-Object -First 2
+
+      - name: Build
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "LarkSender.exe")) { throw "LarkSender.exe not produced" }
+          $size = (Get-Item "LarkSender.exe").Length
+          Write-Host "LarkSender.exe built: $([math]::Round($size/1KB,1)) KB"
+          if ($size -lt 50KB) { throw "exe suspiciously small: $size bytes" }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LarkSender
+          path: |
+            LarkSender.exe
+            config.example.json
+            README.md
