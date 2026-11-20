@@ -113,6 +113,75 @@ namespace LarkSender.Core
             return list;
         }
 
+        /// <summary>
+        /// 删除指定 id 的历史记录。
+        /// 返回实际删除条数；0 表示没找到（可能已被其他实例删掉）。
+        /// </summary>
+        public int DeleteHistory(IEnumerable<string> ids)
+        {
+            if (ids == null) return 0;
+            var targets = new HashSet<string>();
+            foreach (var id in ids)
+            {
+                if (!string.IsNullOrEmpty(id)) targets.Add(id);
+            }
+            if (targets.Count == 0) return 0;
+
+            lock (_lock)
+            {
+                try
+                {
+                    if (!File.Exists(_historyPath)) return 0;
+
+                    var lines = File.ReadAllLines(_historyPath, Encoding.UTF8);
+                    var kept = new List<string>(lines.Length);
+                    int removed = 0;
+
+                    foreach (var line in lines)
+                    {
+                        if (string.IsNullOrWhiteSpace(line)) continue;
+                        var entry = HistoryEntry.FromJson(line);
+                        // 解析失败的行保留（宁可留着也不静默丢数据）
+                        if (entry != null && entry.Id != null && targets.Contains(entry.Id))
+                        {
+                            removed++;
+                            continue;
+                        }
+                        kept.Add(line);
+                    }
+
+                    if (removed > 0)
+                    {
+                        File.WriteAllLines(_historyPath, kept.ToArray(), new UTF8Encoding(false));
+                    }
+                    return removed;
+                }
+                catch (Exception ex)
+                {
+                    LastError = "删除历史失败：" + ex.Message;
+                    return 0;
+                }
+            }
+        }
+
+        /// <summary>清空全部历史</summary>
+        public bool ClearHistory()
+        {
+            lock (_lock)
+            {
+                try
+                {
+                    if (File.Exists(_historyPath)) File.Delete(_historyPath);
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    LastError = "清空历史失败：" + ex.Message;
+                    return false;
+                }
+            }
+        }
+
         // ==================== 内部写盘 ====================
 
         private void AppendLogLine(string line)
@@ -164,6 +233,7 @@ namespace LarkSender.Core
 
                     var entry = new HistoryEntry
                     {
+                        Id = Guid.NewGuid().ToString("N"),
                         Time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
                         Group = groupName ?? "",
                         Text = text ?? "",
@@ -217,6 +287,9 @@ namespace LarkSender.Core
     /// <summary>一条发送历史</summary>
     public class HistoryEntry
     {
+        /// <summary>唯一标识，用于删除单条记录。
+        /// 旧版本历史没有这个字段，读取时按行内容补算一个稳定值。</summary>
+        public string Id { get; set; }
         public string Time { get; set; }
         public string Group { get; set; }
         public string Text { get; set; }
@@ -230,6 +303,7 @@ namespace LarkSender.Core
         {
             return Json.Serialize(new Dictionary<string, object>
             {
+                { "id", Id ?? "" },
                 { "time", Time ?? "" },
                 { "group", Group ?? "" },
                 { "text", Text ?? "" },
@@ -246,8 +320,9 @@ namespace LarkSender.Core
             try
             {
                 var o = Json.ParseObject(line);
-                return new HistoryEntry
+                var entry = new HistoryEntry
                 {
+                    Id = Json.GetString(o, "id", ""),
                     Time = Json.GetString(o, "time", ""),
                     Group = Json.GetString(o, "group", ""),
                     Text = Json.GetString(o, "text", ""),
@@ -257,10 +332,30 @@ namespace LarkSender.Core
                     Error = Json.GetString(o, "error", ""),
                     Source = Json.GetString(o, "source", "")
                 };
+
+                // 旧版本记录没有 id，用行内容的哈希补一个，保证同一条记录 id 稳定
+                if (string.IsNullOrEmpty(entry.Id))
+                {
+                    entry.Id = LegacyId(line);
+                }
+                return entry;
             }
             catch
             {
                 return null; // 坏行直接跳过，不影响其他记录
+            }
+        }
+
+        /// <summary>为旧格式记录生成稳定 id（内容 hash）</summary>
+        private static string LegacyId(string line)
+        {
+            using (var md5 = System.Security.Cryptography.MD5.Create())
+            {
+                var bytes = Encoding.UTF8.GetBytes(line ?? "");
+                var hash = md5.ComputeHash(bytes);
+                var sb = new StringBuilder("legacy-");
+                for (int i = 0; i < 8; i++) sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
             }
         }
     }

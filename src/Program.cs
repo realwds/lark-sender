@@ -41,7 +41,16 @@ namespace LarkSender
             Application.SetCompatibleTextRenderingDefault(false);
             try
             {
-                Application.Run(new MainForm());
+                var form = new MainForm();
+
+                // /tab 2 可直接打开「历史记录」页，便于建快捷方式或排查
+                if (args != null && args.Length >= 2 && args[0] == "/tab")
+                {
+                    int tabIndex;
+                    if (int.TryParse(args[1], out tabIndex)) form.SelectTab(tabIndex);
+                }
+
+                Application.Run(form);
                 return 0;
             }
             catch (Exception ex)

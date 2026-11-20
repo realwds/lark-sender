@@ -33,6 +33,7 @@ namespace LarkSender.Tests
             RunConfigTests();
             RunNotifierErrorTests();
             RunScheduleValidationTests();
+            RunHistoryTests();
 
             Console.WriteLine(new string('=', 60));
             Console.WriteLine();
@@ -366,6 +367,92 @@ namespace LarkSender.Tests
             var d = DateTime.Now.AddDays(1);
             while (d.DayOfWeek != target) d = d.AddDays(1);
             return new DateTime(d.Year, d.Month, d.Day, 10, 0, 0);
+        }
+
+        // ==================== 历史记录 ====================
+
+        private static void RunHistoryTests()
+        {
+            Section("历史记录");
+
+            string dir = Path.Combine(Path.GetTempPath(), "larksender-hist-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string logPath = Path.Combine(dir, "t.log");
+            string histPath = Path.Combine(dir, "h.jsonl");
+
+            try
+            {
+                var logger = new Logger(logPath, histPath);
+
+                // 写 3 条
+                for (int i = 1; i <= 3; i++)
+                {
+                    logger.RecordSend("群" + i, "内容" + i, false,
+                        SendResult.Success("ok", 1), "manual");
+                }
+
+                var list = logger.ReadHistory(10);
+                Eq(list.Count, 3, "写入 3 条读到 3 条");
+                Eq(list[0].Text, "内容3", "最新的在最前");
+                Ok(!string.IsNullOrEmpty(list[0].Id), "每条都有 id");
+
+                // id 应唯一
+                var ids = new HashSet<string>();
+                foreach (var e in list) ids.Add(e.Id);
+                Eq(ids.Count, 3, "3 条记录的 id 互不相同");
+
+                // 删除 1 条
+                int removed = logger.DeleteHistory(new[] { list[0].Id });
+                Eq(removed, 1, "删除 1 条返回 1");
+                Eq(logger.ReadHistory(10).Count, 2, "删后剩 2 条");
+
+                // 幂等：再删同一个 id 应返回 0
+                Eq(logger.DeleteHistory(new[] { list[0].Id }), 0, "重复删除返回 0");
+                Eq(logger.ReadHistory(10).Count, 2, "重复删除不影响其他记录");
+
+                // 批量删
+                var rest = logger.ReadHistory(10);
+                var restIds = new List<string>();
+                foreach (var e in rest) restIds.Add(e.Id);
+                Eq(logger.DeleteHistory(restIds), 2, "批量删除 2 条");
+                Eq(logger.ReadHistory(10).Count, 0, "全删后为空");
+
+                // 再写、然后清空
+                logger.RecordSend("群X", "x", false, SendResult.Success("ok", 1), "cli");
+                Eq(logger.ReadHistory(10).Count, 1, "清空前有 1 条");
+                Ok(logger.ClearHistory(), "清空返回 true");
+                Eq(logger.ReadHistory(10).Count, 0, "清空后为空");
+
+                // 空 ids 不报错也不删东西
+                logger.RecordSend("群Y", "y", false, SendResult.Success("ok", 1), "cli");
+                Eq(logger.DeleteHistory(new List<string>()), 0, "空 id 列表返回 0");
+                Eq(logger.DeleteHistory(null), 0, "null 返回 0");
+                Eq(logger.ReadHistory(10).Count, 1, "传空不影响记录");
+
+                Section("历史记录 - 旧格式兼容");
+
+                // 旧记录没有 id 字段，应能读取并生成稳定 id
+                string legacy = "{\"time\":\"2026-01-01 10:00:00\",\"group\":\"老群\",\"text\":\"老内容\",\"atAll\":false,\"ok\":true,\"attempts\":1,\"error\":\"\",\"source\":\"cli\"}";
+                File.WriteAllText(histPath, legacy + "\n", new UTF8Encoding(false));
+
+                var legacyList = logger.ReadHistory(10);
+                Eq(legacyList.Count, 1, "能读出旧格式记录");
+                Eq(legacyList[0].Text, "老内容", "旧格式内容正确");
+                Ok(legacyList[0].Id != null && legacyList[0].Id.StartsWith("legacy-"), "旧记录生成 legacy- 前缀 id");
+
+                // 同一个旧记录两次读取 id 应一致
+                string id1 = logger.ReadHistory(10)[0].Id;
+                string id2 = logger.ReadHistory(10)[0].Id;
+                Eq(id1, id2, "旧记录的生成 id 稳定");
+
+                // 旧记录也能被删除
+                Eq(logger.DeleteHistory(new[] { id1 }), 1, "旧记录可删除");
+                Eq(logger.ReadHistory(10).Count, 0, "旧记录删除后为空");
+            }
+            finally
+            {
+                try { Directory.Delete(dir, true); } catch { }
+            }
         }
     }
 }

@@ -35,12 +35,22 @@ namespace LarkSender.Forms
         // 历史页
         private ListView _lvHistory;
 
+        private TabControl _tabs;
+
         private bool _busy;
 
         public MainForm()
         {
             InitUi();
             LoadConfigToUi();
+        }
+
+        /// <summary>切换到指定页签（0=发消息 1=定时任务 2=历史记录），供启动参数使用</summary>
+        public void SelectTab(int index)
+        {
+            if (_tabs == null) return;
+            if (index < 0 || index >= _tabs.TabPages.Count) return;
+            _tabs.SelectedIndex = index;
         }
 
         // ==================== 界面构建 ====================
@@ -56,6 +66,7 @@ namespace LarkSender.Forms
             AppIcon.Apply(this);
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
+            _tabs = tabs;
             var tpSend = new TabPage("发消息") { Padding = new Padding(10) };
             var tpSched = new TabPage("定时任务") { Padding = new Padding(10) };
             var tpHistory = new TabPage("历史记录") { Padding = new Padding(10) };
@@ -171,10 +182,22 @@ namespace LarkSender.Forms
                 Text = "存为常用语",
                 AutoSize = true,
                 MinimumSize = new Size(100, 26),
-                Margin = new Padding(0, 2, 0, 0)
+                Margin = new Padding(0, 2, 6, 0)
             };
             btnSaveTpl.Click += (s, e) => SaveAsTemplate();
             row2.Controls.Add(btnSaveTpl, 2, 0);
+
+            var btnManageTpl = new Button
+            {
+                Text = "管理…",
+                AutoSize = true,
+                MinimumSize = new Size(70, 26),
+                Margin = new Padding(0, 2, 0, 0)
+            };
+            btnManageTpl.Click += (s, e) => OpenTemplateManager();
+            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row2.ColumnCount = 4;
+            row2.Controls.Add(btnManageTpl, 3, 0);
 
             // ---- 输入框 ----
             _box = new TextBox
@@ -349,8 +372,9 @@ namespace LarkSender.Forms
             _lvHistory.Columns.Add("时间", 140);
             _lvHistory.Columns.Add("结果", 55);
             _lvHistory.Columns.Add("群", 110);
-            _lvHistory.Columns.Add("内容", 320);
-            _lvHistory.DoubleClick += (s, e) => ReuseHistoryItem();
+            _lvHistory.Columns.Add("内容", 300);
+            _lvHistory.MultiSelect = true;
+            _lvHistory.DoubleClick += (s, e) => CopyHistoryText();
 
             var btnRow = new FlowLayoutPanel
             {
@@ -362,19 +386,27 @@ namespace LarkSender.Forms
                 Margin = new Padding(0)
             };
 
-            var btnReload = new Button { Text = "刷新", Size = new Size(90, 32), Margin = new Padding(0, 0, 8, 0) };
+            var btnReload = new Button { Text = "刷新", Size = new Size(80, 32), Margin = new Padding(0, 0, 6, 0) };
             btnReload.Click += (s, e) => RefreshHistory();
             btnRow.Controls.Add(btnReload);
 
-            var btnReuse = new Button { Text = "填入输入框", Size = new Size(110, 32), Margin = new Padding(0, 0, 12, 0) };
-            btnReuse.Click += (s, e) => ReuseHistoryItem();
-            btnRow.Controls.Add(btnReuse);
+            var btnCopy = new Button { Text = "复制内容", Size = new Size(90, 32), Margin = new Padding(0, 0, 6, 0) };
+            btnCopy.Click += (s, e) => CopyHistoryText();
+            btnRow.Controls.Add(btnCopy);
+
+            var btnDelHist = new Button { Text = "删除选中", Size = new Size(90, 32), Margin = new Padding(0, 0, 6, 0) };
+            btnDelHist.Click += (s, e) => DeleteSelectedHistory();
+            btnRow.Controls.Add(btnDelHist);
+
+            var btnClearHist = new Button { Text = "清空全部", Size = new Size(90, 32), Margin = new Padding(0, 0, 14, 0) };
+            btnClearHist.Click += (s, e) => ClearAllHistory();
+            btnRow.Controls.Add(btnClearHist);
 
             btnRow.Controls.Add(new Label
             {
                 AutoSize = true,
                 ForeColor = Color.DimGray,
-                Text = "双击某条可填回输入框重发",
+                Text = "双击可复制内容（可多选）",
                 Margin = new Padding(0, 8, 0, 0)
             });
 
@@ -449,7 +481,8 @@ namespace LarkSender.Forms
             foreach (var t in _cfg.Templates)
             {
                 var one = (t ?? "").Split('\n')[0].Trim();
-                if (one.Length > 40) one = one.Substring(0, 40) + "…";
+                if (one.Length == 0) one = "(空)";
+                if (one.Length > 50) one = one.Substring(0, 50) + "…";
                 _cboTemplate.Items.Add(one);
             }
             _cboTemplate.SelectedIndex = 0;
@@ -786,21 +819,136 @@ namespace LarkSender.Forms
             }
         }
 
-        private void ReuseHistoryItem()
+        /// <summary>把选中历史的内容复制到剪贴板（支持多选，按行拼接）</summary>
+        private void CopyHistoryText()
         {
             if (_lvHistory.SelectedItems.Count == 0) return;
-            var entry = _lvHistory.SelectedItems[0].Tag as HistoryEntry;
-            if (entry == null) return;
 
-            _box.Text = entry.Text ?? "";
+            var sb = new System.Text.StringBuilder();
+            // SelectedItems 的颉序与点击顺序有关，按列表位置重新排一下
+            var picked = new List<HistoryEntry>();
+            foreach (ListViewItem it in _lvHistory.Items)
+            {
+                if (!it.Selected) continue;
+                var e = it.Tag as HistoryEntry;
+                if (e != null) picked.Add(e);
+            }
+            if (picked.Count == 0) return;
 
-            // 如果历史里的群还在，顺手切过去
-            if (!string.IsNullOrEmpty(entry.Group) && _cboGroup.Items.Contains(entry.Group))
-                _cboGroup.SelectedItem = entry.Group;
+            for (int i = 0; i < picked.Count; i++)
+            {
+                if (i > 0) sb.Append("\r\n");
+                sb.Append(picked[i].Text ?? "");
+            }
 
-            _chkAll.Checked = entry.AtAll;
-            _box.Focus();
-            _box.SelectionStart = _box.TextLength;
+            string content = sb.ToString();
+            if (content.Length == 0)
+            {
+                SetStatus("选中的记录内容为空", Color.DimGray);
+                return;
+            }
+
+            if (TrySetClipboard(content))
+                SetStatus("已复制 " + picked.Count + " 条到剪贴板", Color.ForestGreen);
+            else
+                SetStatus("复制失败，剪贴板被占用", Color.Firebrick);
+        }
+
+        /// <summary>写剪贴板，失败重试几次（剪贴板可能被其他进程临时占用）</summary>
+        private static bool TrySetClipboard(string text)
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                try
+                {
+                    Clipboard.SetText(text);
+                    return true;
+                }
+                catch
+                {
+                    System.Threading.Thread.Sleep(80);
+                }
+            }
+            return false;
+        }
+
+        /// <summary>删除选中的历史记录</summary>
+        private void DeleteSelectedHistory()
+        {
+            if (_lvHistory.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("请先选中要删除的记录（可多选）。", "未选中",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var ids = new List<string>();
+            foreach (ListViewItem it in _lvHistory.Items)
+            {
+                if (!it.Selected) continue;
+                var e = it.Tag as HistoryEntry;
+                if (e != null && !string.IsNullOrEmpty(e.Id)) ids.Add(e.Id);
+            }
+            if (ids.Count == 0) return;
+
+            if (MessageBox.Show("确定删除选中的 " + ids.Count + " 条历史记录？", "确认删除",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+                return;
+
+            int removed = _logger.DeleteHistory(ids);
+            RefreshHistory();
+
+            if (removed > 0)
+                SetStatus("已删除 " + removed + " 条历史", Color.ForestGreen);
+            else
+                SetStatus("删除失败：" + (_logger.LastError ?? "未找到记录"), Color.Firebrick);
+        }
+
+        /// <summary>清空全部历史</summary>
+        private void ClearAllHistory()
+        {
+            if (_lvHistory.Items.Count == 0)
+            {
+                MessageBox.Show("历史记录已经是空的。", "无需清空",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (MessageBox.Show("确定清空全部 " + _lvHistory.Items.Count + " 条历史记录？\n\n此操作不可恢复。",
+                    "确认清空", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                return;
+
+            if (_logger.ClearHistory())
+            {
+                RefreshHistory();
+                SetStatus("历史已清空", Color.ForestGreen);
+            }
+            else
+            {
+                SetStatus("清空失败：" + (_logger.LastError ?? "未知错误"), Color.Firebrick);
+            }
+        }
+
+        /// <summary>打开常用语管理窗口</summary>
+        private void OpenTemplateManager()
+        {
+            using (var dlg = new TemplateManagerForm(_cfg.Templates))
+            {
+                if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Result == null) return;
+
+                _cfg.Templates = dlg.Result;
+                try
+                {
+                    _store.Save(_cfg);
+                    RefreshTemplateCombo();
+                    SetStatus("常用语已更新（" + _cfg.Templates.Count + " 条）", Color.ForestGreen);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("保存失败：" + ex.Message, "错误",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         private void OpenGroupManager()
