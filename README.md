@@ -56,9 +56,18 @@ https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxx
 
 输入文字 → 点「立即发送」（或 `Ctrl+Enter`）。
 
-- 勾「富文本格式」可用 `# 标题` / `**加粗**` / `- 列表`
-- 勾「艾特所有人」消息会带 @all
-- 点「预览」可看实际发出的 JSON
+**输入框右边就是实时预览**，写什么就能看到发出去的样子。勾「富文本格式」后：
+
+| 写法 | 效果 |
+|---|---|
+| `# 标题` | 大号加粗标题 |
+| `- 列表项` | 圆点列表 |
+| `**文字**` | 加粗 |
+
+记住符号很麻烦，勾上富文本后会出现 **「+ 标题」「+ 列表」「B 加粗」** 三个按钮，点一下自动插入语法。
+
+- 勾「艾特所有人」消息会带 @all（预览里会显示蓝色「所有人」）
+- 点「预览」可打开大窗口，左边看效果、右边看**实际发送的 JSON**
 - 「存为常用语」把当前内容存进模板；「管理…」可增删改和排序
 
 ### 4. 定时发送
@@ -128,6 +137,7 @@ src/
 │   ├── GroupEditForm.cs    新增/编辑群
 │   ├── ScheduleForm.cs     定时发送对话框
 │   ├── TemplateManagerForm.cs 常用语管理
+│   ├── PreviewForm.cs      发送预览（效果 + JSON 双视图）
 │   └── AppIcon.cs          窗体图标
 └── tests/
     └── Program.cs          单元测试（自带断言，无框架依赖）
@@ -230,6 +240,20 @@ var root = new TableLayoutPanel { Dock = DockStyle.Fill };
 ### 10. schtasks 时间精度只到分钟
 
 计划 `10:02:56` 实际 `10:02:00` 触发。定时按分钟选即可。
+
+### 11. SplitContainer 不能在创建时硬设 SplitterDistance
+
+```csharp
+// ❌ 窗口创建时宽度还是 0，直接设会抛
+//    “SplitterDistance 必须在 Panel1MinSize 和 Width - Panel2MinSize 之间”
+//    而且这个异常会直接把程序干死在启动阶段
+var sp = new SplitContainer { SplitterDistance = 480, Panel1MinSize = 260, Panel2MinSize = 320 };
+
+// ✅ 等尺寸稳定后再设，并且每次都校验范围
+sp.SizeChanged += (s, e) => SafeSetSplitter(sp, 0.55);
+```
+
+另外 `Panel1MinSize + Panel2MinSize` 之和不要过大，否则窄窗口下必然越界。
 
 ## 贡献
 

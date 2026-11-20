@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -24,6 +25,11 @@ namespace LarkSender.Forms
         private TextBox _box;
         private CheckBox _chkAll;
         private CheckBox _chkPost;
+        private Button _btnSyntaxTitle;
+        private Button _btnSyntaxList;
+        private Button _btnSyntaxBold;
+        private RichTextBox _livePreview;
+        private SplitContainer _editorSplit;
         private Label _lblStatus;
         private Button _btnSend;
         private Button _btnSchedule;
@@ -45,6 +51,59 @@ namespace LarkSender.Forms
             LoadConfigToUi();
         }
 
+        /// <summary>
+        /// 安全设置分栏位置。
+        /// 只在尺寸真的够大时设，且比例控制在合法区间，避免抛异常把程序弄崩。
+        /// </summary>
+        private static void SafeSetSplitter(SplitContainer sc, double ratio)
+        {
+            if (sc == null || sc.IsDisposed) return;
+
+            try
+            {
+                int total = sc.Width;
+                if (total <= 0) return;
+
+                int min1 = sc.Panel1MinSize;
+                int min2 = sc.Panel2MinSize;
+                int usable = total - sc.SplitterWidth;
+
+                // 窗口太窄，两个面板的最小宽度都满足不了 → 不动
+                if (usable < min1 + min2) return;
+
+                int target = (int)(total * ratio);
+                if (target < min1) target = min1;
+                int max = total - min2 - sc.SplitterWidth;
+                if (target > max) target = max;
+
+                if (target >= min1 && target <= max && sc.SplitterDistance != target)
+                    sc.SplitterDistance = target;
+            }
+            catch
+            {
+                // 布局极端情况下忽略，保持默认值
+            }
+        }
+
+        /// <summary>注册一个在窗口首次显示后执行的动作（用于依赖实际尺寸的布局）</summary>
+        private readonly List<Action> _shownHandlers = new List<Action>();
+
+        private void AddShownHandler(Action action)
+        {
+            if (action == null) return;
+            _shownHandlers.Add(action);
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            foreach (var h in _shownHandlers)
+            {
+                try { h(); } catch { }
+            }
+            _shownHandlers.Clear();
+        }
+
         /// <summary>切换到指定页签（0=发消息 1=定时任务 2=历史记录），供启动参数使用</summary>
         public void SelectTab(int index)
         {
@@ -58,8 +117,8 @@ namespace LarkSender.Forms
         private void InitUi()
         {
             Text = "Lark Sender";
-            Size = new Size(760, 660);
-            MinimumSize = new Size(680, 580);
+            Size = new Size(940, 680);
+            MinimumSize = new Size(760, 580);
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Microsoft YaHei UI", 9f);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -199,14 +258,32 @@ namespace LarkSender.Forms
             row2.ColumnCount = 4;
             row2.Controls.Add(btnManageTpl, 3, 0);
 
-            // ---- 输入框 ----
+            // ---- 输入框 + 实时预览（左右分栏）----
+            // 只看得到 `**加粗**` 符号却看不到效果，是富文本最难用的地方。
+            // 这里把输入框和预览并排，边写边看。
+            // 注意：不要在这里硬设 SplitterDistance。
+            // WinForms 的 SplitContainer 创建时宽度还是 0，设大了会抛
+            // “SplitterDistance 必须在 Panel1MinSize 和 Width - Panel2MinSize 之间”，
+            // 导致程序启动失败。让它在 Dock 后自己按默认比例分。
+            var editorSplit = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 6,
+                Margin = new Padding(0, 0, 0, 6),
+                // 最小值设小一点：窗口初建时宽度可能很小，
+                // 两个 MinSize 加起来超过可用宽度就会在后续布局阶段抛异常
+                Panel1MinSize = 100,
+                Panel2MinSize = 80
+            };
+
             _box = new TextBox
             {
                 Multiline = true,
                 ScrollBars = ScrollBars.Vertical,
                 AcceptsReturn = true,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 0, 0, 6)
+                BorderStyle = BorderStyle.None
             };
             _box.KeyDown += (s, e) =>
             {
@@ -216,6 +293,45 @@ namespace LarkSender.Forms
                     DoSend();
                 }
             };
+            _box.TextChanged += (s, e) => RenderLivePreview();
+
+            var editHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            editHost.Controls.Add(_box);
+            editorSplit.Panel1.Controls.Add(editHost);
+
+            // 实时预览只渲染效果，不渲染 JSON
+            _livePreview = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = Color.White,
+                Font = new Font("Microsoft YaHei UI", 10f),
+                DetectUrls = false,
+                ScrollBars = RichTextBoxScrollBars.Vertical
+            };
+            var liveHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            var liveLabel = new Label
+            {
+                Text = "预览",
+                Dock = DockStyle.Top,
+                Height = 20,
+                ForeColor = Color.DimGray,
+                BackColor = Color.FromArgb(246, 248, 250),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(4, 0, 0, 0)
+            };
+            liveHost.Controls.Add(_livePreview);
+            liveHost.Controls.Add(liveLabel);
+            editorSplit.Panel2.Controls.Add(liveHost);
+
+            _editorSplit = editorSplit;
+
+            // 分栏距离在窗口尺寸稳定后再设，并且每次尺寸变化都重新算一次。
+            // SplitContainer 在创建/早期布局阶段宽度很小，此时设 SplitterDistance
+            // 会抛 “SplitterDistance 必须在 Panel1MinSize 和 Width - Panel2MinSize 之间”。
+            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.55);
+            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.55));
 
             // ---- 选项行 ----
             var row4 = new FlowLayoutPanel
@@ -235,15 +351,52 @@ namespace LarkSender.Forms
                 Checked = true,
                 Margin = new Padding(0, 4, 14, 0)
             };
+            _chkAll.CheckedChanged += (s, e) => RenderLivePreview();
             row4.Controls.Add(_chkAll);
 
             _chkPost = new CheckBox
             {
                 Text = "富文本格式",
                 AutoSize = true,
-                Margin = new Padding(0, 4, 14, 0)
+                Margin = new Padding(0, 4, 8, 0)
             };
+            _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
             row4.Controls.Add(_chkPost);
+
+            // 富文本语法快捷按钮：勾了富文本才显示
+            _btnSyntaxTitle = new Button
+            {
+                Text = "+ 标题",
+                Size = new Size(64, 24),
+                Margin = new Padding(0, 3, 4, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnSyntaxTitle.Click += (s, e) => InsertSyntax("# ");
+            row4.Controls.Add(_btnSyntaxTitle);
+
+            _btnSyntaxList = new Button
+            {
+                Text = "+ 列表",
+                Size = new Size(64, 24),
+                Margin = new Padding(0, 3, 4, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnSyntaxList.Click += (s, e) => InsertSyntax("- ");
+            row4.Controls.Add(_btnSyntaxList);
+
+            _btnSyntaxBold = new Button
+            {
+                Text = "B 加粗",
+                Size = new Size(64, 24),
+                Margin = new Padding(0, 3, 14, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false,
+                Font = new Font(Font, FontStyle.Bold)
+            };
+            _btnSyntaxBold.Click += (s, e) => InsertSyntax("**粗体**");
+            row4.Controls.Add(_btnSyntaxBold);
 
             _lblStatus = new Label
             {
@@ -284,7 +437,7 @@ namespace LarkSender.Forms
 
             root.Controls.Add(row1, 0, 0);
             root.Controls.Add(row2, 0, 1);
-            root.Controls.Add(_box, 0, 2);
+            root.Controls.Add(editorSplit, 0, 2);
             root.Controls.Add(row4, 0, 3);
             root.Controls.Add(row5, 0, 4);
             page.Controls.Add(root);
@@ -433,6 +586,8 @@ namespace LarkSender.Forms
             RefreshTemplateCombo();
             RefreshScheduleList();
             RefreshHistory();
+            RenderLivePreview();
+            UpdatePostHint();
         }
 
         private void RefreshGroupCombo()
@@ -622,51 +777,192 @@ namespace LarkSender.Forms
                 return;
             }
 
-            using (var dlg = new Form())
+            using (var dlg = new PreviewForm(text, _chkAll.Checked, _chkPost.Checked, payload))
             {
-                dlg.Text = "发送内容预览";
-                dlg.Size = new Size(680, 480);
-                dlg.StartPosition = FormStartPosition.CenterParent;
-                dlg.Font = Font;
-                AppIcon.Apply(dlg);
-
-                var tb = new TextBox
-                {
-                    Multiline = true,
-                    ReadOnly = true,
-                    ScrollBars = ScrollBars.Both,
-                    WordWrap = false,
-                    Dock = DockStyle.Fill,
-                    Font = new Font("Consolas", 9f),
-                    Text = PrettyJson(payload)
-                };
-                dlg.Controls.Add(tb);
-
-                var btn = new Button
-                {
-                    Text = "关闭",
-                    Dock = DockStyle.Bottom,
-                    Height = 36,
-                    DialogResult = DialogResult.OK
-                };
-                dlg.Controls.Add(btn);
-                dlg.AcceptButton = btn;
-
                 dlg.ShowDialog(this);
             }
         }
 
-        private static string PrettyJson(string json)
+        /// <summary>勾选/取消富文本时，控制语法按钮的显隐并提示语法</summary>
+        private void UpdatePostHint()
         {
+            bool on = _chkPost.Checked;
+            _btnSyntaxTitle.Visible = on;
+            _btnSyntaxList.Visible = on;
+            _btnSyntaxBold.Visible = on;
+
+            if (on)
+            {
+                SetStatus("富文本：# 标题 · - 列表 · **文字** 加粗", Color.FromArgb(37, 99, 235));
+            }
+            else
+            {
+                SetStatus("Ctrl+Enter 快速发送", Color.DimGray);
+            }
+
+            RenderLivePreview();
+        }
+
+        /// <summary>在光标处插入语法片段</summary>
+        private void InsertSyntax(string snippet)
+        {
+            int start = _box.SelectionStart;
+
+            // 对标题/列表：只在行首插入，如果光标不在行首，先换行
+            if (snippet == "# " || snippet == "- ")
+            {
+                bool atLineStart = start == 0 || _box.Text[start - 1] == '\n';
+                if (!atLineStart)
+                {
+                    _box.Text = _box.Text.Insert(start, "\r\n" + snippet);
+                    _box.SelectionStart = start + 2 + snippet.Length;
+                }
+                else
+                {
+                    _box.Text = _box.Text.Insert(start, snippet);
+                    _box.SelectionStart = start + snippet.Length;
+                }
+            }
+            else if (snippet == "**粗体**")
+            {
+                // 如果有选中文本，包住它；否则插入占位符并选中中间
+                if (_box.SelectionLength > 0)
+                {
+                    var selected = _box.Text.Substring(_box.SelectionStart, _box.SelectionLength);
+                    _box.Text = _box.Text.Remove(_box.SelectionStart, _box.SelectionLength)
+                                         .Insert(_box.SelectionStart, "**" + selected + "**");
+                    _box.SelectionStart = start + 2 + selected.Length + 2;
+                }
+                else
+                {
+                    _box.Text = _box.Text.Insert(start, "**粗体**");
+                    // 选中「粗体」两个字，方便直接改
+                    _box.SelectionStart = start + 2;
+                    _box.SelectionLength = 2;
+                }
+            }
+            else
+            {
+                _box.Text = _box.Text.Insert(start, snippet);
+                _box.SelectionStart = start + snippet.Length;
+            }
+
+            _box.Focus();
+        }
+
+        /// <summary>
+        /// 实时渲染右侧预览。
+        /// 纯文本模式下直接原文显示；富文本模式下按 post 语义渲染。
+        /// </summary>
+        private void RenderLivePreview()
+        {
+            if (_livePreview == null) return;
+
+            var text = _box.Text;
+            _livePreview.SuspendLayout();
             try
             {
-                var obj = Json.Parse(json);
-                return Json.SerializeIndented(obj);
+                _livePreview.Clear();
+
+                if (text.Length == 0)
+                {
+                    AppendLive("（在左侧输入内容，这里会显示出效果）",
+                        Color.FromArgb(156, 163, 175), false, false);
+                    return;
+                }
+
+                bool isPost = _chkPost.Checked;
+
+                if (_chkAll.Checked)
+                {
+                    AppendLive("所有人", Color.FromArgb(37, 99, 235), true, false);
+                    AppendLive("\n", Color.Black, false, false);
+                }
+
+                if (!isPost)
+                {
+                    // 纯文本：原样显示，只是把 @all 变蓝
+                    AppendLive(text, Color.Black, false, false);
+                    return;
+                }
+
+                var lines = text.Split('\n');
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    var line = lines[i].TrimEnd('\r');
+                    if (i > 0) AppendLive("\n", Color.Black, false, false);
+                    RenderLiveLine(line);
+                }
             }
-            catch
+            finally
             {
-                return json;
+                _livePreview.ResumeLayout();
             }
+        }
+
+        private void RenderLiveLine(string line)
+        {
+            if (line.Length == 0) return;
+
+            if (line.StartsWith("# "))
+            {
+                AppendLive(line.Substring(2).Trim(), Color.FromArgb(17, 24, 39), true, true);
+                return;
+            }
+
+            if (line.StartsWith("- ") || line.StartsWith("* "))
+            {
+                AppendLive("  •  ", Color.FromArgb(107, 114, 128), false, false);
+                RenderLiveInline(line.Substring(2));
+                return;
+            }
+
+            RenderLiveInline(line);
+        }
+
+        private void RenderLiveInline(string line)
+        {
+            int i = 0;
+            var buf = new StringBuilder();
+
+            while (i < line.Length)
+            {
+                if (i + 1 < line.Length && line[i] == '*' && line[i + 1] == '*')
+                {
+                    int end = line.IndexOf("**", i + 2, StringComparison.Ordinal);
+                    if (end > i)
+                    {
+                        if (buf.Length > 0)
+                        {
+                            AppendLive(buf.ToString(), Color.Black, false, false);
+                            buf.Length = 0;
+                        }
+                        AppendLive(line.Substring(i + 2, end - i - 2), Color.Black, true, false);
+                        i = end + 2;
+                        continue;
+                    }
+                }
+                buf.Append(line[i]);
+                i++;
+            }
+
+            if (buf.Length > 0)
+                AppendLive(buf.ToString(), Color.Black, false, false);
+        }
+
+        private void AppendLive(string text, Color color, bool bold, bool big)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+
+            int start = _livePreview.TextLength;
+            _livePreview.AppendText(text);
+            _livePreview.Select(start, text.Length);
+            _livePreview.SelectionColor = color;
+
+            FontStyle style = bold ? FontStyle.Bold : FontStyle.Regular;
+            float size = _livePreview.Font.Size + (big ? 2.5f : 0f);
+            _livePreview.SelectionFont = new Font(_livePreview.Font.FontFamily, size, style);
+            _livePreview.SelectionLength = 0;
         }
 
         private void DoSend()
