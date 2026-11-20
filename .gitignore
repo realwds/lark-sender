@@ -10,6 +10,11 @@ obj/
 config.json
 config.local.json
 
+# ---- 本地工具 / 凭证 ----
+set-topics.ps1
+token.txt
+*.token
+
 # ---- 日志 ----
 *.log
 logs/

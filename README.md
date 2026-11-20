@@ -1,5 +1,10 @@
 # lark-sender
 
+[![Build](https://github.com/realwds/lark-sender/actions/workflows/build.yml/badge.svg)](https://github.com/realwds/lark-sender/actions/workflows/build.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](#)
+[![.NET](https://img.shields.io/badge/.NET%20Framework-4.x-512BD4.svg)](#)
+
 一个轻量的 Windows 桌面小工具，用于向飞书 / Lark 群组机器人快速发送消息。
 
 双击打开 → 选群 → 输入文字 → 发送。支持多群管理、定时发送、@所有人。
@@ -58,12 +63,19 @@ LarkSender.exe /job <JobId>          :: 由计划任务内部调用
 只需 Windows 自带的 `csc.exe`，**不需要 Visual Studio 或 .NET SDK**：
 
 ```bat
+git clone https://github.com/realwds/lark-sender.git
+cd lark-sender
 build.cmd
 ```
 
-产物：`LarkSender.exe` + `icon.ico`。
+产物：`LarkSender.exe` + `icon.ico`（首次构建会自动生成图标）。
 
 清理：`build.cmd clean`
+
+### 首次使用
+
+把 `config.example.json` 复制为 `config.json`，改成你自己的群和 webhook。
+或者直接运行 `LarkSender.exe`（会自动生成空白 `config.json`），再点「管理群…」新增。
 
 ## 工作原理
 
