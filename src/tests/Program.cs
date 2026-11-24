@@ -262,7 +262,7 @@ namespace LarkSender.Tests
                 // 保存并读回
                 var cfg = new AppConfig();
                 cfg.Groups.Add(new GroupConfig("测试群", "https://example.com/hook/abc", "sec", true, "备注"));
-                cfg.Templates.Add("常用语一");
+                cfg.Templates.Add(new TemplateConfig { Body = "常用语一", Name = "常用语一" });
                 store.Save(cfg);
 
                 var loaded = store.Load();
@@ -299,6 +299,49 @@ namespace LarkSender.Tests
                 Eq(migrated.Schedules.Count, 1, "v1 定时任务被正确读取");
                 Eq(migrated.Schedules[0].Kind, ScheduleKind.Daily, "v1 kind 字符串转为枚举");
                 Ok(migrated.Schedules[0].KindDisplay == "每天", "kind 显示文本正确");
+
+                Section("常用语完整形态");
+
+                // 卡片形态的常用语必须能完整往返
+                var cardCfg = new AppConfig();
+                cardCfg.Templates.Add(new TemplateConfig
+                {
+                    Body = "**服务**：lark-sender",
+                    Title = "部署完成",
+                    Color = "绿",
+                    IsCard = true,
+                    AtAll = true
+                });
+                store.Save(cardCfg);
+                var back = store.Load();
+                Eq(back.Templates.Count, 1, "常用语数量往返");
+                Eq(back.Templates[0].Title, "部署完成", "标题不丢");
+                Eq(back.Templates[0].Color, "绿", "颜色不丢");
+                Eq(back.Templates[0].IsCard, true, "卡片标志不丢");
+                Eq(back.Templates[0].AtAll, true, "@所有人 不丢");
+                Ok(back.Templates[0].Body.Contains("**服务**"), "正文完整保留");
+                Eq(back.Templates[0].Name, "部署完成", "Name 优先用标题");
+
+                // 旧版字符串形式的常用语要能升级
+                string oldTpl = @"{
+                    ""version"": 2,
+                    ""groups"": [],
+                    ""schedules"": [],
+                    ""templates"": [""旧版常用语"", ""第二条""]
+                }";
+                File.WriteAllText(path, oldTpl, Encoding.UTF8);
+                var legacyTpl = store.Load();
+                Eq(legacyTpl.Templates.Count, 2, "旧版字符串常用语被读取");
+                Eq(legacyTpl.Templates[0].Body, "旧版常用语", "旧版正文正确");
+                Eq(legacyTpl.Templates[0].IsCard, false, "旧版默认非卡片");
+                Eq(legacyTpl.Templates[0].Name, "旧版常用语", "旧版Name 由正文生成");
+
+                // Name 生成规则
+                Eq(TemplateConfig.MakeName("正文内容", ""), "正文内容", "无标题时用正文");
+                Eq(TemplateConfig.MakeName("正文", "标题"), "标题", "有标题时优先标题");
+                Eq(TemplateConfig.MakeName("# 去掉井号", ""), "去掉井号", "Name 去掉 Markdown 标记");
+                Eq(TemplateConfig.MakeName("**加粗**文字", ""), "加粗文字", "Name 去掉 ** 标记");
+                Eq(TemplateConfig.MakeName("", ""), "(空)", "全空时返回占位");
             }
             finally
             {

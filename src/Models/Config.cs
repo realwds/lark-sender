@@ -109,7 +109,7 @@ namespace LarkSender.Models
         public List<GroupConfig> Groups { get; set; }
         public List<ScheduleConfig> Schedules { get; set; }
         /// <summary>常用短语模板</summary>
-        public List<string> Templates { get; set; }
+        public List<TemplateConfig> Templates { get; set; }
 
         /// <summary>@所有人 是否与文字同行（默认换行）</summary>
         public bool AtAllInline { get; set; }
@@ -121,7 +121,7 @@ namespace LarkSender.Models
             Version = CurrentVersion;
             Groups = new List<GroupConfig>();
             Schedules = new List<ScheduleConfig>();
-            Templates = new List<string>();
+            Templates = new List<TemplateConfig>();
             AtAllInline = false;
         }
     }

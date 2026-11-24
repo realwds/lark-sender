@@ -34,8 +34,8 @@ namespace LarkSender.Forms
         }
 
         /// <summary>
-        /// 在系统绘制后覆盖分割条区域（Paint 事件是画在上面，能盖住默认凹陷）。
-        /// 保持 10px 宽度方便拖拽，视觉上只看到一条 1px 细线。
+        /// 在系统绘制后覆盖分割条区域。
+        /// 效果：一条与背景同色的间隔 + 中间一根极淡的 1px 竖线，鼠标靠近时变蓝。
         /// </summary>
         public static void PaintOver(SplitContainer sc, PaintEventArgs e)
         {
@@ -48,26 +48,28 @@ namespace LarkSender.Forms
             var sr = sc.SplitterRectangle;
             if (sr.Width <= 0 && sr.Height <= 0) return;
 
-            // 把整个分割条区域重画成浅灰背景
-            using (var bg = new SolidBrush(TrackBg))
+            // 用窗体背景色填满分割条（看起来就像两块卡片间的间隙）
+            using (var bg = new SolidBrush(Theme.Bg))
             {
                 g.FillRectangle(bg, sr);
             }
 
-            // 鼠标在分割条附近时高亮
             bool hover = sc.SplitterRectangle.Contains(sc.PointToClient(Cursor.Position));
-
-            using (var pen = new Pen(hover ? GripHover : GripColor, 1f))
+            if (hover)
             {
-                if (sc.Orientation == Orientation.Vertical)
+                // 悬停时画一根蓝色细线，提示可拖
+                using (var pen = new Pen(Theme.Primary, 1f))
                 {
-                    int x = sr.Left + sr.Width / 2;
-                    g.DrawLine(pen, x, sr.Top + 8, x, sr.Bottom - 8);
-                }
-                else
-                {
-                    int y = sr.Top + sr.Height / 2;
-                    g.DrawLine(pen, sr.Left + 8, y, sr.Right - 8, y);
+                    if (sc.Orientation == Orientation.Vertical)
+                    {
+                        int x = sr.Left + sr.Width / 2;
+                        g.DrawLine(pen, x, sr.Top + 10, x, sr.Bottom - 10);
+                    }
+                    else
+                    {
+                        int y = sr.Top + sr.Height / 2;
+                        g.DrawLine(pen, sr.Left + 10, y, sr.Right - 10, y);
+                    }
                 }
             }
         }

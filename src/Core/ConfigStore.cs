@@ -115,11 +115,31 @@ namespace LarkSender.Core
                 });
             }
 
-            // v2 新增：常用短语模板
+            // v2 新增：常用短语模板（v3 起升级为对象，兼容旧版字符串）
             foreach (var item in Json.GetList(root, "templates"))
             {
-                var t = item as string;
-                if (!string.IsNullOrWhiteSpace(t)) cfg.Templates.Add(t);
+                if (item is string)
+                {
+                    // 旧格式：纯字符串
+                    var legacy = (string)item;
+                    if (!string.IsNullOrWhiteSpace(legacy))
+                        cfg.Templates.Add(TemplateConfig.FromLegacyString(legacy));
+                }
+                else
+                {
+                    var obj = item as Dictionary<string, object>;
+                    if (obj == null) continue;
+                    var tpl = new TemplateConfig
+                    {
+                        Body = Json.GetString(obj, "body", ""),
+                        Title = Json.GetString(obj, "title", ""),
+                        Color = Json.GetString(obj, "color", ""),
+                        IsCard = Json.GetBool(obj, "isCard", false),
+                        AtAll = Json.GetBool(obj, "atAll", false)
+                    };
+                    tpl.RefreshName();
+                    if (tpl.Body.Length > 0 || tpl.Title.Length > 0) cfg.Templates.Add(tpl);
+                }
             }
 
             // v3 新增：@所有人 是否同行
@@ -176,7 +196,17 @@ namespace LarkSender.Core
             }
 
             var templates = new List<object>();
-            foreach (var t in cfg.Templates) templates.Add(t ?? "");
+            foreach (var t in cfg.Templates)
+            {
+                templates.Add(new Dictionary<string, object>
+                {
+                    { "body", t.Body ?? "" },
+                    { "title", t.Title ?? "" },
+                    { "color", t.Color ?? "" },
+                    { "isCard", t.IsCard },
+                    { "atAll", t.AtAll }
+                });
+            }
 
             return new Dictionary<string, object>
             {

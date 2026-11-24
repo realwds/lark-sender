@@ -123,11 +123,10 @@ namespace LarkSender.Forms
         private void InitUi()
         {
             Text = "Lark Sender";
-            Size = new Size(940, 680);
-            MinimumSize = new Size(760, 580);
+            Size = new Size(980, 700);
+            MinimumSize = new Size(820, 600);
             StartPosition = FormStartPosition.CenterScreen;
-            Font = new Font("Microsoft YaHei UI", 9f);
-            AutoScaleMode = AutoScaleMode.Dpi;
+            Theme.ApplyForm(this);
             AppIcon.Apply(this);
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
@@ -143,283 +142,61 @@ namespace LarkSender.Forms
             BuildHistoryTab(tpHistory);
         }
 
-        private void BuildSendTab(TabPage page)
+private void BuildSendTab(TabPage page)
         {
+            page.BackColor = Theme.Bg;
+            page.Padding = new Padding(16, 12, 16, 12);
+
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 6
+                RowCount = 5,
+                BackColor = Theme.Bg
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 选群
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 模板
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 卡片标题（仅卡片模式）
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // 输入框 + 预览
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 选项 + 格式
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 按钮
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 目标群
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 卡片标题
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // 编辑区
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 工具条
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 主操作
 
-            // ---- 选群行 ----
-            var row1 = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 4,
-                RowCount = 1,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 6)
-            };
-            row1.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            row1.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230f));
-            row1.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            row1.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-
-            row1.Controls.Add(new Label
-            {
-                Text = "发送到",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 6, 0)
-            }, 0, 0);
-
-            _cboGroup = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Dock = DockStyle.Fill,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            _cboGroup.SelectedIndexChanged += (s, e) => UpdateHookLabel();
-            row1.Controls.Add(_cboGroup, 1, 0);
-
-            var btnManage = new Button
-            {
-                Text = "管理群…",
-                AutoSize = true,
-                MinimumSize = new Size(90, 28),
-                Margin = new Padding(0, 2, 8, 0)
-            };
-            btnManage.Click += (s, e) => OpenGroupManager();
-            row1.Controls.Add(btnManage, 2, 0);
-
-            _lblHook = new Label
-            {
-                AutoSize = false,
-                AutoEllipsis = true,
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.DimGray,
-                Margin = new Padding(0, 2, 0, 0)
-            };
-            row1.Controls.Add(_lblHook, 3, 0);
-
-            // ---- 模板行 ----
-            var row2 = new TableLayoutPanel
+            // ==================== 目标群 ====================
+            var rowGroup = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 3,
                 RowCount = 1,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 6)
+                Margin = new Padding(0, 0, 0, 10),
+                BackColor = Theme.Bg
             };
-            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            row2.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            rowGroup.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            rowGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240f));
+            rowGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
 
-            row2.Controls.Add(new Label
+            rowGroup.Controls.Add(new Label
             {
-                Text = "常用语",
+                Text = "发送到",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 6, 0)
+                ForeColor = Theme.TextSecondary,
+                Margin = new Padding(0, 6, 10, 0)
             }, 0, 0);
 
-            _cboTemplate = new ComboBox
+            _cboGroup = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 2, 6, 0)
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
             };
-            _cboTemplate.SelectedIndexChanged += (s, e) => ApplyTemplate();
-            row2.Controls.Add(_cboTemplate, 1, 0);
+            _cboGroup.SelectedIndexChanged += (s, e) => UpdateHookLabel();
+            rowGroup.Controls.Add(_cboGroup, 1, 0);
 
-            var btnSaveTpl = new Button
-            {
-                Text = "存为常用语",
-                AutoSize = true,
-                MinimumSize = new Size(100, 26),
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            btnSaveTpl.Click += (s, e) => SaveAsTemplate();
-            row2.Controls.Add(btnSaveTpl, 2, 0);
-
-            var btnManageTpl = new Button
-            {
-                Text = "管理…",
-                AutoSize = true,
-                MinimumSize = new Size(70, 26),
-                Margin = new Padding(0, 2, 0, 0)
-            };
-            btnManageTpl.Click += (s, e) => OpenTemplateManager();
-            row2.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            row2.ColumnCount = 4;
-            row2.Controls.Add(btnManageTpl, 3, 0);
-
-            // ---- 输入框 + 实时预览（左右分栏，双向绑定）----
-            // 两边都可编辑：左边写 Markdown，右边改文字会回写到左边。
-            var editorSplit = new SplitContainer
-            {
-                Dock = DockStyle.Fill,
-                Orientation = Orientation.Vertical,
-                SplitterWidth = 10,
-                Margin = new Padding(0, 0, 0, 8),
-                Panel1MinSize = 100,
-                Panel2MinSize = 80,
-                // 去掉默认的 3D 凹凸边框，看起来干净
-                BorderStyle = BorderStyle.None
-            };
-            // 分割条美化：先让容器不自绘，再由 Paint 画细线
-            editorSplit.Paint += (s, e) => SplitPaint.PaintOver(editorSplit, e);
-            SplitPaint.Attach(editorSplit);
-
-            _box = new TextBox
-            {
-                Multiline = true,
-                ScrollBars = ScrollBars.Vertical,
-                AcceptsReturn = true,
-                Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                Font = new Font("Microsoft YaHei UI", 10f)
-            };
-            _box.KeyDown += (s, e) =>
-            {
-                if (e.Control && e.KeyCode == Keys.Enter)
-                {
-                    e.SuppressKeyPress = true;
-                    DoSend();
-                }
-            };
-            _box.TextChanged += (s, e) => { if (!_syncingPreview) RenderLivePreview(); };
-            var editHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 6) };
-            editHost.Controls.Add(_box);
-            editHost.Paint += (s, e) => SplitPaint.PaintCardBorder(editHost, e);
-            editorSplit.Panel1.Controls.Add(editHost);
-
-            // 右侧可编辑预览
-            _livePreview = new RichTextBox
-            {
-                Dock = DockStyle.Fill,
-                ReadOnly = false,
-                BorderStyle = BorderStyle.None,
-                BackColor = Color.White,
-                Font = new Font("Microsoft YaHei UI", 10f),
-                DetectUrls = false,
-                ScrollBars = RichTextBoxScrollBars.Vertical
-            };
-            // 双击 / 回车时才开始编辑效果，平时保持渲染态
-            _livePreview.LinkClicked += (s, e) => { };
-            _livePreview.TextChanged += (s, e) =>
-            {
-                if (_syncingPreview) return;
-                SyncPreviewToSource();
-            };
-
-            var liveHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 6) };
-            liveHost.Paint += (s, e) => SplitPaint.PaintCardBorder(liveHost, e);
-
-            var liveLabel = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 26,
-                BackColor = Color.FromArgb(249, 250, 251),
-                Padding = new Padding(10, 0, 8, 0)
-            };
-            liveLabel.Controls.Add(new Label
-            {
-                Text = "预览（可直接修改）",
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.FromArgb(107, 114, 128),
-                Font = new Font("Microsoft YaHei UI", 8.5f)
-            });
-            liveHost.Controls.Add(_livePreview);
-            liveHost.Controls.Add(liveLabel);
-            editorSplit.Panel2.Controls.Add(liveHost);
-
-            _editorSplit = editorSplit;
-
-            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.52);
-            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.52));
-
-            // ---- 卡片标题行（仅卡片模式可见）----
-            var titleRow = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 4,
-                RowCount = 1,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 6),
-                Visible = false
-            };
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92f));
-
-            titleRow.Controls.Add(new Label
-            {
-                Text = "卡片标题",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 6, 0)
-            }, 0, 0);
-
-            _txtCardTitle = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                Margin = new Padding(0, 2, 6, 0)
-            };
-            // .NET 4.0 没有 PlaceholderText，用灰色提示文字模拟
-            SetPlaceholder(_txtCardTitle, "例如：部署完成 / 周会提醒");
-            _txtCardTitle.TextChanged += (s, e) => RenderLivePreview();
-            titleRow.Controls.Add(_txtCardTitle, 1, 0);
-
-            titleRow.Controls.Add(new Label
-            {
-                Text = "颜色",
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding(0, 6, 6, 0)
-            }, 2, 0);
-
-            _cboColor = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Dock = DockStyle.Fill,
-                Margin = new Padding(0, 2, 0, 0)
-            };
-            _cboColor.Items.AddRange(new object[] { "自动", "蓝", "绿", "红", "橙", "灰", "紫", "青" });
-            _cboColor.SelectedIndex = 0;
-            _cboColor.SelectedIndexChanged += (s, e) => RenderLivePreview();
-            titleRow.Controls.Add(_cboColor, 3, 0);
-
-            _titleRow = titleRow;
-
-            // ---- 底部工具栏：只留必要控件，其余收进菜单 ----
-            var row4 = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 2,
-                RowCount = 1,
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 8)
-            };
-            row4.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            row4.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
-
-            var leftTools = new FlowLayoutPanel
+            // webhook 状态 + 管理入口合在一起，不再单独占按钮位
+            var groupTail = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
@@ -429,114 +206,361 @@ namespace LarkSender.Forms
                 Margin = new Padding(0)
             };
 
-            // 卡片开关：用 ToolStrip 风格的切换按钮，比 CheckBox 紧凑
-            _chkPost = new CheckBox
+            _lblHook = new Label
             {
-                Text = "卡片消息",
                 AutoSize = true,
-                Margin = new Padding(0, 5, 12, 0)
+                Anchor = AnchorStyles.Left,
+                ForeColor = Theme.TextMuted,
+                Font = Theme.FontSmall,
+                Text = "",
+                Margin = new Padding(0, 8, 8, 0)
             };
-            _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
-            leftTools.Controls.Add(_chkPost);
+            groupTail.Controls.Add(_lblHook);
 
-            _chkAll = new CheckBox
+            var lnkManageGroup = MakeLinkLabel("管理群");
+            lnkManageGroup.Click += (s, e) => OpenGroupManager();
+            groupTail.Controls.Add(lnkManageGroup);
+
+            rowGroup.Controls.Add(groupTail, 2, 0);
+
+            // ==================== 卡片标题（仅卡片模式） ====================
+            var rowTitle = new TableLayoutPanel
             {
-                Text = "@所有人",
+                Dock = DockStyle.Fill,
+                ColumnCount = 5,
+                RowCount = 1,
                 AutoSize = true,
-                Checked = true,
-                Margin = new Padding(0, 5, 6, 0)
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0, 0, 0, 10),
+                Visible = false,
+                BackColor = Theme.Bg
             };
-            _chkAll.CheckedChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
-            leftTools.Controls.Add(_chkAll);
+            rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92f));
+            rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            // @所有人 同行/换行 下拉（只在勾选 @所有人 时可见）
-            _cboAtAllMode = new ComboBox
+            rowTitle.Controls.Add(new Label
+            {
+                Text = "标题",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                ForeColor = Theme.TextSecondary,
+                Margin = new Padding(0, 6, 10, 0)
+            }, 0, 0);
+
+            _txtCardTitle = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
+                Margin = new Padding(0, 2, 10, 0)
+            };
+            SetPlaceholder(_txtCardTitle, "选填，例如：部署完成");
+            _txtCardTitle.TextChanged += (s, e) => RenderLivePreview();
+            rowTitle.Controls.Add(_txtCardTitle, 1, 0);
+
+            rowTitle.Controls.Add(new Label
+            {
+                Text = "颜色",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                ForeColor = Theme.TextSecondary,
+                Margin = new Padding(0, 6, 8, 0)
+            }, 2, 0);
+
+            _cboColor = new ComboBox
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 76,
-                Margin = new Padding(0, 3, 14, 0),
-                Visible = false
-            };
-            _cboAtAllMode.Items.AddRange(new object[] { "换行", "同行" });
-            _cboAtAllMode.SelectedIndexChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
-            leftTools.Controls.Add(_cboAtAllMode);
-
-            // 格式菜单（代替原来的 7 个按钮）
-            _btnFormatMenu = new Button
-            {
-                Text = "格式 ▼",
-                Size = new Size(76, 28),
-                Margin = new Padding(0, 1, 6, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnFormatMenu.Click += (s, e) => ShowFormatMenu();
-            leftTools.Controls.Add(_btnFormatMenu);
-
-            // 插入菜单
-            _btnInsertMenu = new Button
-            {
-                Text = "插入 ▼",
-                Size = new Size(76, 28),
-                Margin = new Padding(0, 1, 6, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnInsertMenu.Click += (s, e) => ShowInsertMenu();
-            leftTools.Controls.Add(_btnInsertMenu);
-
-            row4.Controls.Add(leftTools, 0, 0);
-
-            _lblStatus = new Label
-            {
-                AutoSize = false,
                 Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleRight,
-                ForeColor = Color.FromArgb(107, 114, 128),
-                Text = "Ctrl+Enter 发送",
-                Margin = new Padding(8, 0, 2, 0)
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 2, 10, 0)
             };
-            row4.Controls.Add(_lblStatus, 1, 0);
+            _cboColor.Items.AddRange(new object[] { "自动", "蓝", "绿", "红", "橙", "灰", "紫", "青" });
+            _cboColor.SelectedIndex = 0;
+            _cboColor.SelectedIndexChanged += (s, e) => RenderLivePreview();
+            rowTitle.Controls.Add(_cboColor, 3, 0);
 
-            // ---- 底部主操作 ----
-            var row5 = new FlowLayoutPanel
+            _titleRow = rowTitle;
+
+            // ==================== 编辑区（左写右看） ====================
+            var editorSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.RightToLeft,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 12,
+                Margin = new Padding(0, 0, 0, 10),
+                Panel1MinSize = 100,
+                Panel2MinSize = 100,
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.Bg
+            };
+
+            // 左侧：Markdown 编辑
+            var leftCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(0) };
+
+            var leftHeader = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 30,
+                BackColor = Theme.Bg,
+                Padding = new Padding(12, 0, 8, 0)
+            };
+            leftHeader.Controls.Add(new Label
+            {
+                Text = "内容",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Theme.TextSecondary,
+                Font = Theme.FontSmall
+            });
+
+            _box = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                AcceptsReturn = true,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.None,
+                Font = Theme.FontBody,
+                BackColor = Theme.Surface,
+                ForeColor = Theme.TextPrimary
+            };            _box.KeyDown += (s, e) =>
+            {
+                if (e.Control && e.KeyCode == Keys.Enter)
+                {
+                    e.SuppressKeyPress = true;
+                    DoSend();
+                }
+            };
+            _box.TextChanged += (s, e) => { if (!_syncingPreview) RenderLivePreview(); };
+
+            var leftBody = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 6, 10) };
+            leftBody.Controls.Add(_box);
+
+            leftCard.Controls.Add(leftBody);
+            leftCard.Controls.Add(leftHeader);
+            editorSplit.Panel1.Controls.Add(leftCard);
+
+            // 右侧：可编辑预览
+            var rightCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(0) };
+
+            var rightHeader = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 30,
+                BackColor = Theme.Bg,
+                Padding = new Padding(12, 0, 8, 0)
+            };
+            rightHeader.Controls.Add(new Label
+            {
+                Text = "预览（可直接编辑）",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Theme.TextSecondary,
+                Font = Theme.FontSmall
+            });
+
+            _livePreview = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = false,
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.Surface,
+                ForeColor = Theme.TextPrimary,
+                Font = new Font("Microsoft YaHei UI", 10f),
+                DetectUrls = false,
+                ScrollBars = RichTextBoxScrollBars.Vertical
+            };
+            _livePreview.TextChanged += (s, e) =>
+            {
+                if (_syncingPreview) return;
+                SyncPreviewToSource();
+            };
+
+            var rightBody = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 10, 10) };
+            rightBody.Controls.Add(_livePreview);
+
+            rightCard.Controls.Add(rightBody);
+            rightCard.Controls.Add(rightHeader);
+            editorSplit.Panel2.Controls.Add(rightCard);
+
+            _editorSplit = editorSplit;
+            editorSplit.Paint += (s, e) => SplitPaint.PaintOver(editorSplit, e);
+            SplitPaint.Attach(editorSplit);
+            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.5);
+            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.5));
+
+            // ==================== 工具条 ====================
+            var rowTools = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0, 0, 0, 10),
+                BackColor = Theme.Bg
+            };
+            rowTools.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            rowTools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            var toolsLeft = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Margin = new Padding(0)
             };
 
+            // 常用语下拉放在最前（最常用）
+            _cboTemplate = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 170,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 3, 6, 0)
+            };
+            _cboTemplate.SelectedIndexChanged += (s, e) => ApplyTemplate();
+            toolsLeft.Controls.Add(_cboTemplate);
+
+            var lnkSaveTpl = MakeLinkLabel("存为常用语");
+            lnkSaveTpl.Margin = new Padding(0, 8, 16, 0);
+            lnkSaveTpl.Click += (s, e) => SaveAsTemplate();
+            toolsLeft.Controls.Add(lnkSaveTpl);
+
+            _chkPost = new CheckBox
+            {
+                Text = "卡片消息",
+                AutoSize = true,
+                ForeColor = Theme.TextSecondary,
+                Margin = new Padding(0, 6, 16, 0)
+            };
+            _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
+            toolsLeft.Controls.Add(_chkPost);
+
+            _chkAll = new CheckBox
+            {
+                Text = "所有人",
+                AutoSize = true,
+                Checked = true,
+                ForeColor = Theme.TextSecondary,
+                Margin = new Padding(0, 6, 6, 0)
+            };
+            _chkAll.CheckedChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
+            toolsLeft.Controls.Add(_chkAll);
+
+            _cboAtAllMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 72,
+                FlatStyle = FlatStyle.Flat,
+                Margin = new Padding(0, 4, 16, 0),
+                Visible = false
+            };
+            _cboAtAllMode.Items.AddRange(new object[] { "换行", "同行" });
+            _cboAtAllMode.SelectedIndexChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
+            toolsLeft.Controls.Add(_cboAtAllMode);
+
+            // 格式 / 插入 用扁平小按钮
+            _btnFormatMenu = MakeToolButton("格式", 68);
+            _btnFormatMenu.Click += (s, e) => ShowFormatMenu();
+            toolsLeft.Controls.Add(_btnFormatMenu);
+
+            _btnInsertMenu = MakeToolButton("插入", 68);
+            _btnInsertMenu.Click += (s, e) => ShowInsertMenu();
+            toolsLeft.Controls.Add(_btnInsertMenu);
+
+            _btnMoreMenu = MakeToolButton("更多", 68);
+            _btnMoreMenu.Click += (s, e) => ShowMoreMenu();
+            toolsLeft.Controls.Add(_btnMoreMenu);
+
+            rowTools.Controls.Add(toolsLeft, 0, 0);
+
+            _lblStatus = new Label
+            {
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleRight,
+                ForeColor = Theme.TextMuted,
+                Font = Theme.FontSmall,
+                Text = "",
+                Margin = new Padding(8, 0, 0, 0)
+            };
+            rowTools.Controls.Add(_lblStatus, 1, 0);
+
+            // ==================== 主操作 ====================
+            var rowAction = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0),
+                BackColor = Theme.Bg
+            };
+            rowAction.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            rowAction.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            var hint = new Label
+            {
+                Text = "Ctrl + Enter 快速发送",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                ForeColor = Theme.TextMuted,
+                Font = Theme.FontSmall,
+                Margin = new Padding(0, 10, 0, 0)
+            };
+            rowAction.Controls.Add(hint, 0, 0);
+
             _btnSend = new Button
             {
                 Text = "发送",
-                Size = new Size(120, 36),
-                Margin = new Padding(8, 0, 0, 0),
-                FlatStyle = FlatStyle.System,
-                Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold)
+                Size = new Size(120, 38),
+                Margin = new Padding(0),
+                Font = new Font(Theme.FontBody.FontFamily, 10f, FontStyle.Bold)
             };
+            Theme.StylePrimary(_btnSend);
             _btnSend.Click += (s, e) => DoSend();
-            row5.Controls.Add(_btnSend);
+            rowAction.Controls.Add(_btnSend, 1, 0);
 
-            _btnMoreMenu = new Button
-            {
-                Text = "更多 ▼",
-                Size = new Size(84, 36),
-                Margin = new Padding(8, 0, 0, 0),
-                FlatStyle = FlatStyle.System
-            };
-            _btnMoreMenu.Click += (s, e) => ShowMoreMenu();
-            row5.Controls.Add(_btnMoreMenu);
-
-            root.Controls.Add(row1, 0, 0);
-            root.Controls.Add(row2, 0, 1);
-            root.Controls.Add(titleRow, 0, 2);
-            root.Controls.Add(editorSplit, 0, 3);
-            root.Controls.Add(row4, 0, 4);
-            root.Controls.Add(row5, 0, 5);
+            root.Controls.Add(rowGroup, 0, 0);
+            root.Controls.Add(rowTitle, 0, 1);
+            root.Controls.Add(editorSplit, 0, 2);
+            root.Controls.Add(rowTools, 0, 3);
+            root.Controls.Add(rowAction, 0, 4);
             page.Controls.Add(root);
+        }
+
+        /// <summary>创建一个小号扁平工具按钮</summary>
+        private Button MakeToolButton(string text, int width)
+        {
+            var b = new Button
+            {
+                Text = text,
+                Size = new Size(width, 28),
+                Margin = new Padding(0, 3, 6, 0)
+            };
+            Theme.StyleSecondary(b);
+            return b;
+        }
+
+        /// <summary>创建链接样式标签（比按钮轻）</summary>
+        private LinkLabel MakeLinkLabel(string text)
+        {
+            return new LinkLabel
+            {
+                Text = text,
+                AutoSize = true,
+                LinkColor = Theme.Primary,
+                ActiveLinkColor = Theme.PrimaryHover,
+                Font = Theme.FontSmall,
+                LinkBehavior = LinkBehavior.HoverUnderline,
+                Margin = new Padding(0, 8, 0, 0)
+            };
         }
 
         private void BuildScheduleTab(TabPage page)
@@ -785,13 +809,11 @@ namespace LarkSender.Forms
         private void RefreshTemplateCombo()
         {
             _cboTemplate.Items.Clear();
-            _cboTemplate.Items.Add("(选择常用语)");
+            _cboTemplate.Items.Add("选择常用语…");
             foreach (var t in _cfg.Templates)
             {
-                var one = (t ?? "").Split('\n')[0].Trim();
-                if (one.Length == 0) one = "(空)";
-                if (one.Length > 50) one = one.Substring(0, 50) + "…";
-                _cboTemplate.Items.Add(one);
+                var prefix = t.IsCard ? "[卡片] " : "";
+                _cboTemplate.Items.Add(prefix + t.Name);
             }
             _cboTemplate.SelectedIndex = 0;
         }
@@ -980,36 +1002,88 @@ namespace LarkSender.Forms
             int tplIdx = idx - 1;
             if (tplIdx >= 0 && tplIdx < _cfg.Templates.Count)
             {
-                _box.Text = _cfg.Templates[tplIdx];
+                var tpl = _cfg.Templates[tplIdx];
+
+                // 还原当时保存的形态：正文 + 卡片标题 + 颜色 + 是否卡片
+                _box.Text = tpl.Body ?? "";
                 _box.SelectionStart = _box.TextLength;
+
+                if (_chkPost.Checked != tpl.IsCard)
+                {
+                    _chkPost.Checked = tpl.IsCard;
+                    UpdatePostHint();
+                }
+
+                SetRealText(_txtCardTitle, tpl.Title);
+
+                if (_cboColor != null)
+                {
+                    int ci = 0;
+                    if (!string.IsNullOrEmpty(tpl.Color))
+                    {
+                        var items = _cboColor.Items;
+                        for (int k = 0; k < items.Count; k++)
+                        {
+                            if (string.Equals(items[k].ToString(), tpl.Color, StringComparison.Ordinal))
+                            { ci = k; break; }
+                        }
+                    }
+                    _cboColor.SelectedIndex = ci;
+                }
+
+                _chkAll.Checked = tpl.AtAll;
+                RenderLivePreview();
+                SetStatus("已填入常用语：" + tpl.Name, Theme.Primary);
             }
             _cboTemplate.SelectedIndex = 0;
         }
 
         private void SaveAsTemplate()
         {
-            var text = _box.Text.Trim();
-            if (text.Length == 0)
+            var body = _box.Text.Trim();
+            string title = RealText(_txtCardTitle).Trim();
+
+            // 卡片模式允许只有标题没正文
+            if (body.Length == 0 && !(_chkPost.Checked && title.Length > 0))
             {
-                MessageBox.Show("输入框是空的。", "无法保存", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                return;
-            }
-            if (_cfg.Templates.Contains(text))
-            {
-                MessageBox.Show("这条常用语已经存在了。", "重复", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show("内容和标题都是空的，没东西可存。", "无法保存",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
 
-            _cfg.Templates.Add(text);
+            var tpl = new TemplateConfig
+            {
+                Body = body,
+                Title = title,
+                IsCard = _chkPost.Checked,
+                AtAll = _chkAll.Checked,
+                Color = _chkPost.Checked && _cboColor != null && _cboColor.SelectedIndex > 0
+                        ? _cboColor.SelectedItem.ToString() : ""
+            };
+            tpl.RefreshName();
+
+            // 重复检查：正文+标题+卡片状态 完全一致才算重复
+            foreach (var t in _cfg.Templates)
+            {
+                if (t.Body == tpl.Body && t.Title == tpl.Title && t.IsCard == tpl.IsCard)
+                {
+                    MessageBox.Show("这条常用语已经存在了。", "重复",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+            }
+
+            _cfg.Templates.Add(tpl);
             try
             {
                 _store.Save(_cfg);
                 RefreshTemplateCombo();
-                SetStatus("已保存为常用语", Color.ForestGreen);
+                SetStatus("已保存常用语：" + tpl.Name, Theme.Success);
             }
             catch (Exception ex)
             {
-                MessageBox.Show("保存失败：" + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("保存失败：" + ex.Message, "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -1329,9 +1403,10 @@ namespace LarkSender.Forms
             AddMenuItem(menu, "定时发送…", () => OpenScheduleDialog(), FontStyle.Regular);
             AddMenuItem(menu, "查看发送的 JSON", () => ShowPreview(), FontStyle.Regular);
             menu.Items.Add(new ToolStripSeparator());
-            AddMenuItem(menu, "存为常用语", () => SaveAsTemplate(), FontStyle.Regular);
             AddMenuItem(menu, "管理常用语…", () => OpenTemplateManager(), FontStyle.Regular);
             AddMenuItem(menu, "管理群…", () => OpenGroupManager(), FontStyle.Regular);
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuItem(menu, "关闭窗口", () => Close(), FontStyle.Regular);
 
             menu.Show(_btnMoreMenu, new Point(0, _btnMoreMenu.Height));
         }
