@@ -41,12 +41,18 @@ namespace LarkSender.Forms
         /// <summary>把 Markdown 渲染到 RichTextBox（模拟飞书卡片）</summary>
         public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard)
         {
-            Render(rtb, markdown, atAll, asCard, null, CardBuilder.HeaderColor.Blue, true);
+            Render(rtb, markdown, atAll, asCard, null, CardBuilder.HeaderColor.Blue, true, false);
         }
 
-        /// <summary>带标题/颜色参数的渲染（卡片模式）</summary>
         public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard,
             string title, CardBuilder.HeaderColor color, bool autoColor)
+        {
+            Render(rtb, markdown, atAll, asCard, title, color, autoColor, false);
+        }
+
+        /// <summary>带标题/颜色/@同行 参数的渲染（卡片模式）</summary>
+        public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard,
+            string title, CardBuilder.HeaderColor color, bool autoColor, bool atAllInline)
         {
             if (rtb == null) return;
 
@@ -67,14 +73,15 @@ namespace LarkSender.Forms
                     // 纯文本模式：原样显示
                     if (atAll)
                     {
-                        Append(rtb, "@所有人\n", LinkColor, Bold(rtb.Font), false);
+                        Append(rtb, atAllInline ? "@所有人 " : "@所有人\n",
+                            LinkColor, Bold(rtb.Font), false);
                     }
                     Append(rtb, markdown ?? "", TextPrimary, rtb.Font, false);
                     return;
                 }
 
                 // ===== 卡片模式 =====
-                var parsed = CardBuilder.Parse(markdown, atAll);
+                var parsed = CardBuilder.Parse(markdown, atAll, atAllInline);
 
                 // 界面填的标题优先（用户不需要在正文里写 #）
                 if (!string.IsNullOrWhiteSpace(title))
@@ -237,6 +244,21 @@ namespace LarkSender.Forms
 
             while (i < text.Length)
             {
+                // <at id=all></at> → 蓝色 @所有人
+                if (text[i] == '<')
+                {
+                    var mAt = System.Text.RegularExpressions.Regex.Match(
+                        text.Substring(i),
+                        "^<at\\s+(?:id|user_id)\\s*=\\s*[\\\"']?all[\\\"']?[^>]*>(.*?)</at>");
+                    if (mAt.Success)
+                    {
+                        flushBuf();
+                        Append(rtb, "@所有人", LinkColor, Bold(baseFont), false);
+                        i += mAt.Length;
+                        continue;
+                    }
+                }
+
                 // **加粗**
                 if (i + 1 < text.Length && text[i] == '*' && text[i + 1] == '*')
                 {

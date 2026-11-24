@@ -238,18 +238,29 @@ namespace LarkSender.Core
         public string BuildPayload(string text, bool atAll, string secret, MessageKind kind,
             string cardTitle, CardBuilder.HeaderColor color, bool autoColor)
         {
+            return BuildPayload(text, atAll, secret, kind, cardTitle, color, autoColor, false);
+        }
+
+        public string BuildPayload(string text, bool atAll, string secret, MessageKind kind,
+            string cardTitle, CardBuilder.HeaderColor color, bool autoColor, bool atAllInline)
+        {
             var payload = new Dictionary<string, object>();
 
             if (kind == MessageKind.Card)
             {
                 payload["msg_type"] = "interactive";
-                payload["card"] = CardBuilder.BuildCardWithTitle(cardTitle, text, atAll, color, autoColor);
+                payload["card"] = CardBuilder.BuildCardWithTitle(cardTitle, text, atAll, color, autoColor, atAllInline);
             }
             else
             {
                 payload["msg_type"] = "text";
                 var body = text ?? "";
-                if (atAll) body = "<at user_id=\"all\">所有人</at>\n" + body;
+                if (atAll)
+                {
+                    body = atAllInline
+                        ? "<at user_id=\"all\">所有人</at> " + body
+                        : "<at user_id=\"all\">所有人</at>\n" + body;
+                }
                 payload["content"] = new Dictionary<string, object> { { "text", body } };
             }
 
@@ -269,6 +280,12 @@ namespace LarkSender.Core
         public SendResult Send(GroupConfig group, string text, bool atAll, MessageKind kind,
             string cardTitle, CardBuilder.HeaderColor color, bool autoColor)
         {
+            return Send(group, text, atAll, kind, cardTitle, color, autoColor, false);
+        }
+
+        public SendResult Send(GroupConfig group, string text, bool atAll, MessageKind kind,
+            string cardTitle, CardBuilder.HeaderColor color, bool autoColor, bool atAllInline)
+        {
             if (group == null)
                 return SendResult.Fail("未指定群", "", false, 0);
 
@@ -283,7 +300,7 @@ namespace LarkSender.Core
             string payload;
             try
             {
-                payload = BuildPayload(text, atAll, group.Secret, kind, cardTitle, color, autoColor);
+                payload = BuildPayload(text, atAll, group.Secret, kind, cardTitle, color, autoColor, atAllInline);
             }
             catch (Exception ex)
             {

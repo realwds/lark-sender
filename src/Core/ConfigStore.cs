@@ -122,6 +122,9 @@ namespace LarkSender.Core
                 if (!string.IsNullOrWhiteSpace(t)) cfg.Templates.Add(t);
             }
 
+            // v3 新增：@所有人 是否同行
+            cfg.AtAllInline = Json.GetBool(root, "atAllInline", false);
+
             return cfg;
         }
 
@@ -180,7 +183,8 @@ namespace LarkSender.Core
                 { "version", AppConfig.CurrentVersion },
                 { "groups", groups },
                 { "schedules", schedules },
-                { "templates", templates }
+                { "templates", templates },
+                { "atAllInline", cfg.AtAllInline }
             };
         }
 

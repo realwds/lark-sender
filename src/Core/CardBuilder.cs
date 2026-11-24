@@ -56,7 +56,13 @@ namespace LarkSender.Core
         public static Dictionary<string, object> BuildCardWithTitle(string title, string body, bool atAll,
             HeaderColor color, bool autoColor)
         {
-            var parsed = Parse(body, atAll);
+            return BuildCardWithTitle(title, body, atAll, color, autoColor, false);
+        }
+
+        public static Dictionary<string, object> BuildCardWithTitle(string title, string body, bool atAll,
+            HeaderColor color, bool autoColor, bool atAllInline)
+        {
+            var parsed = Parse(body, atAll, atAllInline);
 
             // 正文里写了 # 标题但界面也填了标题 → 以界面为准，避免重复
             string finalTitle = string.IsNullOrWhiteSpace(title) ? parsed.Title : title.Trim();
@@ -107,7 +113,13 @@ namespace LarkSender.Core
         /// <summary>
         /// 解析 Markdown 文本为卡片结构。
         /// </summary>
+        /// <param name="atAllInline">true：@所有人 贴在正文首行前；false：单独一行</param>
         public static CardResult Parse(string markdown, bool atAll)
+        {
+            return Parse(markdown, atAll, false);
+        }
+
+        public static CardResult Parse(string markdown, bool atAll, bool atAllInline)
         {
             var result = new CardResult();
             var lines = (markdown ?? "").Replace("\r\n", "\n").Split('\n');
@@ -253,17 +265,28 @@ namespace LarkSender.Core
                 flush();
             }
 
-            // @所有人：放到最后一条 action 前面，没有就单独加一行
+            // @所有人
             if (atAll)
             {
-                result.Elements.Add(new Dictionary<string, object>
+                if (atAllInline && result.Elements.Count > 0)
                 {
-                    { "tag", "div" },
-                    { "text", new Dictionary<string, object> {
-                        { "tag", "lark_md" },
-                        { "content", "<at id=all></at>" }
-                    }}
-                });
+                    // 贴在第一块正文前面
+                    var first = result.Elements[0] as Dictionary<string, object>;
+                    var txtObj = Json.GetObject(first, "text");
+                    if (txtObj != null && Json.GetString(txtObj, "tag", "") == "lark_md")
+                    {
+                        var content = Json.GetString(txtObj, "content", "");
+                        txtObj["content"] = "<at id=all></at> " + content;
+                    }
+                    else
+                    {
+                        result.Elements.Insert(0, AtElement());
+                    }
+                }
+                else
+                {
+                    result.Elements.Add(AtElement());
+                }
             }
 
             // 一个块都没有时给个占位，避免空卡片
@@ -280,6 +303,18 @@ namespace LarkSender.Core
             }
 
             return result;
+        }
+
+        private static Dictionary<string, object> AtElement()
+        {
+            return new Dictionary<string, object>
+            {
+                { "tag", "div" },
+                { "text", new Dictionary<string, object> {
+                    { "tag", "lark_md" },
+                    { "content", "<at id=all></at>" }
+                }}
+            };
         }
 
         private static bool IsAfterSeparator(string[] lines, int startIndex, int current)

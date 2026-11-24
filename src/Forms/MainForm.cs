@@ -25,16 +25,19 @@ namespace LarkSender.Forms
         private TextBox _box;
         private CheckBox _chkAll;
         private CheckBox _chkPost;
+        private ComboBox _cboAtAllMode;
         private TextBox _txtCardTitle;
         private ComboBox _cboColor;
         private TableLayoutPanel _titleRow;
-        private List<Button> _fmtButtons;
+        private Button _btnFormatMenu;
+        private Button _btnInsertMenu;
+        private Button _btnMoreMenu;
         private RichTextBox _livePreview;
         private SplitContainer _editorSplit;
+        /// <summary>同步标志：防止左右互相同步时死循环</summary>
+        private bool _syncingPreview;
         private Label _lblStatus;
         private Button _btnSend;
-        private Button _btnSchedule;
-        private Button _btnPreview;
 
         // 定时任务页
         private ListView _lvSched;
@@ -262,24 +265,22 @@ namespace LarkSender.Forms
             row2.ColumnCount = 4;
             row2.Controls.Add(btnManageTpl, 3, 0);
 
-            // ---- 输入框 + 实时预览（左右分栏）----
-            // 只看得到 `**加粗**` 符号却看不到效果，是富文本最难用的地方。
-            // 这里把输入框和预览并排，边写边看。
-            // 注意：不要在这里硬设 SplitterDistance。
-            // WinForms 的 SplitContainer 创建时宽度还是 0，设大了会抛
-            // “SplitterDistance 必须在 Panel1MinSize 和 Width - Panel2MinSize 之间”，
-            // 导致程序启动失败。让它在 Dock 后自己按默认比例分。
+            // ---- 输入框 + 实时预览（左右分栏，双向绑定）----
+            // 两边都可编辑：左边写 Markdown，右边改文字会回写到左边。
             var editorSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
-                SplitterWidth = 6,
-                Margin = new Padding(0, 0, 0, 6),
-                // 最小值设小一点：窗口初建时宽度可能很小，
-                // 两个 MinSize 加起来超过可用宽度就会在后续布局阶段抛异常
+                SplitterWidth = 10,
+                Margin = new Padding(0, 0, 0, 8),
                 Panel1MinSize = 100,
-                Panel2MinSize = 80
+                Panel2MinSize = 80,
+                // 去掉默认的 3D 凹凸边框，看起来干净
+                BorderStyle = BorderStyle.None
             };
+            // 分割条美化：先让容器不自绘，再由 Paint 画细线
+            editorSplit.Paint += (s, e) => SplitPaint.PaintOver(editorSplit, e);
+            SplitPaint.Attach(editorSplit);
 
             _box = new TextBox
             {
@@ -287,7 +288,8 @@ namespace LarkSender.Forms
                 ScrollBars = ScrollBars.Vertical,
                 AcceptsReturn = true,
                 Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None
+                BorderStyle = BorderStyle.None,
+                Font = new Font("Microsoft YaHei UI", 10f)
             };
             _box.KeyDown += (s, e) =>
             {
@@ -297,45 +299,57 @@ namespace LarkSender.Forms
                     DoSend();
                 }
             };
-            _box.TextChanged += (s, e) => RenderLivePreview();
-
-            var editHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            _box.TextChanged += (s, e) => { if (!_syncingPreview) RenderLivePreview(); };
+            var editHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 6) };
             editHost.Controls.Add(_box);
+            editHost.Paint += (s, e) => SplitPaint.PaintCardBorder(editHost, e);
             editorSplit.Panel1.Controls.Add(editHost);
 
-            // 实时预览只渲染效果，不渲染 JSON
+            // 右侧可编辑预览
             _livePreview = new RichTextBox
             {
                 Dock = DockStyle.Fill,
-                ReadOnly = true,
+                ReadOnly = false,
                 BorderStyle = BorderStyle.None,
                 BackColor = Color.White,
                 Font = new Font("Microsoft YaHei UI", 10f),
                 DetectUrls = false,
                 ScrollBars = RichTextBoxScrollBars.Vertical
             };
-            var liveHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
-            var liveLabel = new Label
+            // 双击 / 回车时才开始编辑效果，平时保持渲染态
+            _livePreview.LinkClicked += (s, e) => { };
+            _livePreview.TextChanged += (s, e) =>
             {
-                Text = "预览",
-                Dock = DockStyle.Top,
-                Height = 20,
-                ForeColor = Color.DimGray,
-                BackColor = Color.FromArgb(246, 248, 250),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(4, 0, 0, 0)
+                if (_syncingPreview) return;
+                SyncPreviewToSource();
             };
+
+            var liveHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8, 6, 8, 6) };
+            liveHost.Paint += (s, e) => SplitPaint.PaintCardBorder(liveHost, e);
+
+            var liveLabel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 26,
+                BackColor = Color.FromArgb(249, 250, 251),
+                Padding = new Padding(10, 0, 8, 0)
+            };
+            liveLabel.Controls.Add(new Label
+            {
+                Text = "预览（可直接修改）",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(107, 114, 128),
+                Font = new Font("Microsoft YaHei UI", 8.5f)
+            });
             liveHost.Controls.Add(_livePreview);
             liveHost.Controls.Add(liveLabel);
             editorSplit.Panel2.Controls.Add(liveHost);
 
             _editorSplit = editorSplit;
 
-            // 分栏距离在窗口尺寸稳定后再设，并且每次尺寸变化都重新算一次。
-            // SplitContainer 在创建/早期布局阶段宽度很小，此时设 SplitterDistance
-            // 会抛 “SplitterDistance 必须在 Panel1MinSize 和 Width - Panel2MinSize 之间”。
-            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.55);
-            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.55));
+            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.52);
+            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.52));
 
             // ---- 卡片标题行（仅卡片模式可见）----
             var titleRow = new TableLayoutPanel
@@ -392,85 +406,99 @@ namespace LarkSender.Forms
 
             _titleRow = titleRow;
 
-            // ---- 选项行（带格式工具栏）----
-            var row4 = new FlowLayoutPanel
+            // ---- 底部工具栏：只留必要控件，其余收进菜单 ----
+            var row4 = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0, 0, 0, 8)
+            };
+            row4.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row4.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+
+            var leftTools = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
+                WrapContents = false,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 6)
+                Margin = new Padding(0)
             };
 
-            _chkAll = new CheckBox
-            {
-                Text = "艾特所有人",
-                AutoSize = true,
-                Checked = true,
-                Margin = new Padding(0, 6, 14, 0)
-            };
-            _chkAll.CheckedChanged += (s, e) => RenderLivePreview();
-            row4.Controls.Add(_chkAll);
-
+            // 卡片开关：用 ToolStrip 风格的切换按钮，比 CheckBox 紧凑
             _chkPost = new CheckBox
             {
                 Text = "卡片消息",
                 AutoSize = true,
-                Margin = new Padding(0, 6, 14, 0)
+                Margin = new Padding(0, 5, 12, 0)
             };
             _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
-            row4.Controls.Add(_chkPost);
+            leftTools.Controls.Add(_chkPost);
 
-            // 格式工具：不需要懂 Markdown，选中文字点按钮就行
-            _fmtButtons = new List<Button>();
+            _chkAll = new CheckBox
+            {
+                Text = "@所有人",
+                AutoSize = true,
+                Checked = true,
+                Margin = new Padding(0, 5, 6, 0)
+            };
+            _chkAll.CheckedChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
+            leftTools.Controls.Add(_chkAll);
 
-            var btnBold = MakeFormatButton("加粗", 52, new Font(Font, FontStyle.Bold));
-            btnBold.Click += (s, e) => WrapSelection("**", "**", "粗体文字");
-            row4.Controls.Add(btnBold);
-            _fmtButtons.Add(btnBold);
+            // @所有人 同行/换行 下拉（只在勾选 @所有人 时可见）
+            _cboAtAllMode = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Width = 76,
+                Margin = new Padding(0, 3, 14, 0),
+                Visible = false
+            };
+            _cboAtAllMode.Items.AddRange(new object[] { "换行", "同行" });
+            _cboAtAllMode.SelectedIndexChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
+            leftTools.Controls.Add(_cboAtAllMode);
 
-            var btnItalic = MakeFormatButton("斜体", 52, new Font(Font, FontStyle.Italic));
-            btnItalic.Click += (s, e) => WrapSelection("*", "*", "斜体文字");
-            row4.Controls.Add(btnItalic);
-            _fmtButtons.Add(btnItalic);
+            // 格式菜单（代替原来的 7 个按钮）
+            _btnFormatMenu = new Button
+            {
+                Text = "格式 ▼",
+                Size = new Size(76, 28),
+                Margin = new Padding(0, 1, 6, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnFormatMenu.Click += (s, e) => ShowFormatMenu();
+            leftTools.Controls.Add(_btnFormatMenu);
 
-            var btnStrike = MakeFormatButton("删除线", 62, new Font(Font, FontStyle.Strikeout));
-            btnStrike.Click += (s, e) => WrapSelection("~~", "~~", "删除文字");
-            row4.Controls.Add(btnStrike);
-            _fmtButtons.Add(btnStrike);
+            // 插入菜单
+            _btnInsertMenu = new Button
+            {
+                Text = "插入 ▼",
+                Size = new Size(76, 28),
+                Margin = new Padding(0, 1, 6, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnInsertMenu.Click += (s, e) => ShowInsertMenu();
+            leftTools.Controls.Add(_btnInsertMenu);
 
-            var btnBullet = MakeFormatButton("· 列表", 58, Font);
-            btnBullet.Click += (s, e) => InsertLinePrefix("- ");
-            row4.Controls.Add(btnBullet);
-            _fmtButtons.Add(btnBullet);
-
-            var btnNumber = MakeFormatButton("1. 编号", 64, Font);
-            btnNumber.Click += (s, e) => InsertLinePrefix("1. ");
-            row4.Controls.Add(btnNumber);
-            _fmtButtons.Add(btnNumber);
-
-            var btnLink = MakeFormatButton("链接", 52, Font);
-            btnLink.Click += (s, e) => InsertLink();
-            row4.Controls.Add(btnLink);
-            _fmtButtons.Add(btnLink);
-
-            var btnHr = MakeFormatButton("分割线", 62, Font);
-            btnHr.Click += (s, e) => InsertLinePrefix("---");
-            row4.Controls.Add(btnHr);
-            _fmtButtons.Add(btnHr);
+            row4.Controls.Add(leftTools, 0, 0);
 
             _lblStatus = new Label
             {
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                ForeColor = Color.DimGray,
-                Text = "Ctrl+Enter 快速发送",
-                Margin = new Padding(0, 10, 0, 0)
+                AutoSize = false,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleRight,
+                ForeColor = Color.FromArgb(107, 114, 128),
+                Text = "Ctrl+Enter 发送",
+                Margin = new Padding(8, 0, 2, 0)
             };
-            row4.Controls.Add(_lblStatus);
+            row4.Controls.Add(_lblStatus, 1, 0);
 
-            // ---- 按钮行 ----
+            // ---- 底部主操作 ----
             var row5 = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -481,21 +509,26 @@ namespace LarkSender.Forms
                 Margin = new Padding(0)
             };
 
-            _btnSend = new Button { Text = "立即发送", Size = new Size(110, 34), Margin = new Padding(8, 0, 0, 0) };
+            _btnSend = new Button
+            {
+                Text = "发送",
+                Size = new Size(120, 36),
+                Margin = new Padding(8, 0, 0, 0),
+                FlatStyle = FlatStyle.System,
+                Font = new Font(Font.FontFamily, 9.5f, FontStyle.Bold)
+            };
             _btnSend.Click += (s, e) => DoSend();
             row5.Controls.Add(_btnSend);
 
-            _btnSchedule = new Button { Text = "定时发送…", Size = new Size(110, 34), Margin = new Padding(8, 0, 0, 0) };
-            _btnSchedule.Click += (s, e) => OpenScheduleDialog();
-            row5.Controls.Add(_btnSchedule);
-
-            _btnPreview = new Button { Text = "预览", Size = new Size(80, 34), Margin = new Padding(8, 0, 0, 0) };
-            _btnPreview.Click += (s, e) => ShowPreview();
-            row5.Controls.Add(_btnPreview);
-
-            var btnClose = new Button { Text = "关闭", Size = new Size(80, 34), Margin = new Padding(8, 0, 0, 0) };
-            btnClose.Click += (s, e) => Close();
-            row5.Controls.Add(btnClose);
+            _btnMoreMenu = new Button
+            {
+                Text = "更多 ▼",
+                Size = new Size(84, 36),
+                Margin = new Padding(8, 0, 0, 0),
+                FlatStyle = FlatStyle.System
+            };
+            _btnMoreMenu.Click += (s, e) => ShowMoreMenu();
+            row5.Controls.Add(_btnMoreMenu);
 
             root.Controls.Add(row1, 0, 0);
             root.Controls.Add(row2, 0, 1);
@@ -633,6 +666,10 @@ namespace LarkSender.Forms
             split.Panel2.Controls.Add(previewHost);
 
             _historySplit = split;
+            split.BorderStyle = BorderStyle.None;
+            split.SplitterWidth = 10;
+            split.Paint += (s, e) => SplitPaint.PaintOver(split, e);
+            SplitPaint.Attach(split);
             split.SizeChanged += (s, e) => SafeSetSplitter(split, 0.48);
             AddShownHandler(() => SafeSetSplitter(split, 0.48));
 
@@ -697,6 +734,11 @@ namespace LarkSender.Forms
             RefreshTemplateCombo();
             RefreshScheduleList();
             RefreshHistory();
+            if (_cboAtAllMode != null)
+            {
+                _cboAtAllMode.SelectedIndex = (_cfg.AtAllInline ? 1 : 0);
+            }
+            UpdateAtAllModeVisibility();
             RenderLivePreview();
             UpdatePostHint();
         }
@@ -994,7 +1036,7 @@ namespace LarkSender.Forms
             {
                 var notifier = new Notifier();
                 payload = notifier.BuildPayload(text, _chkAll.Checked,
-                    g != null ? g.Secret : null, kind, cardTitle, cardColor, autoColor);
+                    g != null ? g.Secret : null, kind, cardTitle, cardColor, autoColor, AtAllInline);
             }
             catch (Exception ex)
             {
@@ -1008,25 +1050,22 @@ namespace LarkSender.Forms
             }
         }
 
-        /// <summary>勾选/取消卡片模式时，显示标题行与格式按钮</summary>
+        /// <summary>勾选/取消卡片模式时，显示格式菜单入口</summary>
         private void UpdatePostHint()
         {
             bool on = _chkPost.Checked;
 
             _titleRow.Visible = on;
-            if (_fmtButtons != null)
-            {
-                foreach (var b in _fmtButtons) b.Visible = on;
-            }
+            if (_btnFormatMenu != null) _btnFormatMenu.Visible = on;
+            if (_btnInsertMenu != null) _btnInsertMenu.Visible = on;
 
             if (on)
             {
-                SetStatus("选中文字后点按钮就能改格式，不需懂 Markdown",
-                    Color.FromArgb(37, 99, 235));
+                SetStatus("选中文字后点「格式」改样式", Color.FromArgb(37, 99, 235));
             }
             else
             {
-                SetStatus("Ctrl+Enter 快速发送", Color.DimGray);
+                SetStatus("Ctrl+Enter 发送", Color.FromArgb(107, 114, 128));
             }
 
             RenderLivePreview();
@@ -1056,31 +1095,56 @@ namespace LarkSender.Forms
         private static void SetPlaceholder(TextBox tb, string hint)
         {
             if (tb == null) return;
-            tb.ForeColor = Color.Gray;
+
+            // 用一个标志位区分：true = 当前显示的是占位文字
+            var state = new PlaceholderState { Hint = hint, ShowingHint = true };
+            tb.Tag = state;
+            tb.ForeColor = Color.FromArgb(156, 163, 175);
             tb.Text = hint;
-            bool showing = true;
 
             tb.GotFocus += (s, e) =>
             {
-                if (showing) { tb.Text = ""; tb.ForeColor = Color.Black; showing = false; }
+                if (state.ShowingHint)
+                {
+                    state.ShowingHint = false;
+                    tb.Text = "";
+                    tb.ForeColor = Color.Black;
+                }
             };
             tb.LostFocus += (s, e) =>
             {
                 if (tb.Text.Trim().Length == 0)
                 {
-                    tb.Text = hint; tb.ForeColor = Color.Gray; showing = true;
+                    state.ShowingHint = true;
+                    tb.Text = hint;
+                    tb.ForeColor = Color.FromArgb(156, 163, 175);
                 }
             };
-            // 对外提供“真实值”判断
-            tb.Tag = (Func<bool>)(() => !showing);
+            // 文本被程序改动时（如 SetRealText）同步状态
+            tb.TextChanged += (s, e) =>
+            {
+                if (!state.ShowingHint) return;
+                if (tb.Text != hint) state.ShowingHint = false;
+            };
+        }
+
+        /// <summary>占位符状态（避免用闭包变量导致无法从外部读取）</summary>
+        private class PlaceholderState
+        {
+            public string Hint;
+            public bool ShowingHint;
         }
 
         /// <summary>取 TextBox 真实输入（排除占位符）</summary>
         private static string RealText(TextBox tb)
         {
             if (tb == null) return "";
-            var isReal = tb.Tag as Func<bool>;
-            if (isReal != null && !isReal()) return "";
+            var st = tb.Tag as PlaceholderState;
+            if (st != null)
+            {
+                if (st.ShowingHint) return "";
+                return tb.Text ?? "";
+            }
             return tb.Text ?? "";
         }
 
@@ -1088,12 +1152,199 @@ namespace LarkSender.Forms
         private static void ClearWithPlaceholder(TextBox tb, string hint)
         {
             if (tb == null) return;
-            tb.Text = hint;
-            tb.ForeColor = Color.Gray;
-            tb.Tag = (Func<bool>)(() => false);
+            var st = tb.Tag as PlaceholderState;
+            if (st != null)
+            {
+                st.ShowingHint = true;
+                tb.Text = hint;
+                tb.ForeColor = Color.FromArgb(156, 163, 175);
+            }
+            else
+            {
+                tb.Text = "";
+            }
         }
 
-        /// <summary>创建格式按钮（统一样式）</summary>
+        /// <summary>往占位符输入框写入真实内容</summary>
+        private static void SetRealText(TextBox tb, string text)
+        {
+            if (tb == null) return;
+            var st = tb.Tag as PlaceholderState;
+            if (!string.IsNullOrEmpty(text))
+            {
+                if (st != null) st.ShowingHint = false;
+                tb.Text = text;
+                tb.ForeColor = Color.Black;
+            }
+            else
+            {
+                ClearWithPlaceholder(tb, st != null ? st.Hint : "");
+            }
+        }
+
+        /// <summary>
+        /// 右侧预览被编辑后，把内容回写到左侧源文本。
+        ///
+        /// 预览是富文本渲染后的样子，反向转回 Markdown 只能尽力而为：
+        /// 保留结构（粗体/斜体/列表），拿不到的属性（如链接地址）忽略。
+        /// 这也是为什么左侧是主编辑区，右侧适合微调措辞。
+        /// </summary>
+        private void SyncPreviewToSource()
+        {
+            if (_syncingPreview) return;
+
+            _syncingPreview = true;
+            try
+            {
+                var md = RichTextToMarkdown();
+                if (md != null && md != _box.Text)
+                {
+                    int sel = _box.SelectionStart;
+                    _box.Text = md;
+                    if (sel <= _box.TextLength) _box.SelectionStart = sel;
+                }
+            }
+            finally
+            {
+                _syncingPreview = false;
+            }
+        }
+
+        /// <summary>把 RichTextBox 的富文本反向转成 Markdown</summary>
+        private string RichTextToMarkdown()
+        {
+            if (_livePreview == null) return null;
+
+            var sb = new StringBuilder();
+            var plain = _livePreview.Text;
+            int pos = 0;
+
+            // 逐字符读样式，合并连续相同样式的片段
+            while (pos < plain.Length)
+            {
+                _livePreview.Select(pos, 1);
+                var font = _livePreview.SelectionFont;
+                var color = _livePreview.SelectionColor;
+                bool bold = font != null && font.Bold;
+                bool italic = font != null && font.Italic;
+                bool strike = font != null && font.Strikeout;
+                bool isCode = font != null && font.Name != null &&
+                              font.Name.Equals("Consolas", StringComparison.OrdinalIgnoreCase);
+
+                int start = pos;
+                while (pos < plain.Length)
+                {
+                    _livePreview.Select(pos, 1);
+                    var f2 = _livePreview.SelectionFont;
+                    var c2 = _livePreview.SelectionColor;
+                    bool same =
+                        (f2 != null && f2.Bold) == bold &&
+                        (f2 != null && f2.Italic) == italic &&
+                        (f2 != null && f2.Strikeout) == strike &&
+                        (f2 != null && f2.Name != null && f2.Name.Equals("Consolas", StringComparison.OrdinalIgnoreCase)) == isCode &&
+                        c2.Equals(color);
+                    if (!same) break;
+                    pos++;
+                }
+
+                var chunk = plain.Substring(start, pos - start);
+                sb.Append(DecorateChunk(chunk, bold, italic, strike, isCode));
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>按样式给文本包上 Markdown 标记（跳过空白）</summary>
+        private static string DecorateChunk(string text, bool bold, bool italic, bool strike, bool isCode)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            // 纯空白或换行不包标记，否则会出现 "**  **" 这种垃圾
+            if (text.Trim().Length == 0) return text;
+
+            string s = text;
+            if (isCode) return "`" + s + "`";
+            if (strike) s = "~~" + s + "~~";
+            if (bold && italic) s = "***" + s + "***";
+            else if (bold) s = "**" + s + "**";
+            else if (italic) s = "*" + s + "*";
+            return s;
+        }
+
+        /// <summary>@所有人 同行/换行 下拉的显隐与取值</summary>
+        private bool AtAllInline
+        {
+            get { return _cboAtAllMode != null && _cboAtAllMode.SelectedIndex == 1; }
+        }
+
+        private void UpdateAtAllModeVisibility()
+        {
+            if (_cboAtAllMode != null)
+                _cboAtAllMode.Visible = _chkAll != null && _chkAll.Checked;
+        }
+
+        /// <summary>把 @所有人 同行/换行 存进配置（下次打开记住）</summary>
+        private void SaveAtAllInline()
+        {
+            UpdateAtAllModeVisibility();
+            if (_cfg == null) return;
+            bool now = AtAllInline;
+            if (_cfg.AtAllInline == now) return;
+            _cfg.AtAllInline = now;
+            try { _store.Save(_cfg); } catch { /* 保存失败不影响使用 */ }
+        }
+
+        // ==================== 菜单 ====================
+
+        private void ShowFormatMenu()
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = Font;
+
+            AddMenuItem(menu, "加粗", () => WrapSelection("**", "**", "粗体文字"), FontStyle.Bold);
+            AddMenuItem(menu, "斜体", () => WrapSelection("*", "*", "斜体文字"), FontStyle.Italic);
+            AddMenuItem(menu, "删除线", () => WrapSelection("~~", "~~", "删除文字"), FontStyle.Strikeout);
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuItem(menu, "无序列表", () => InsertLinePrefix("- "), FontStyle.Regular);
+            AddMenuItem(menu, "有序列表", () => InsertLinePrefix("1. "), FontStyle.Regular);
+
+            menu.Show(_btnFormatMenu, new Point(0, _btnFormatMenu.Height));
+        }
+
+        private void ShowInsertMenu()
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = Font;
+
+            AddMenuItem(menu, "链接", () => InsertLink(), FontStyle.Regular);
+            AddMenuItem(menu, "分割线", () => InsertLinePrefix("---"), FontStyle.Regular);
+
+            menu.Show(_btnInsertMenu, new Point(0, _btnInsertMenu.Height));
+        }
+
+        private void ShowMoreMenu()
+        {
+            var menu = new ContextMenuStrip();
+            menu.Font = Font;
+
+            AddMenuItem(menu, "定时发送…", () => OpenScheduleDialog(), FontStyle.Regular);
+            AddMenuItem(menu, "查看发送的 JSON", () => ShowPreview(), FontStyle.Regular);
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuItem(menu, "存为常用语", () => SaveAsTemplate(), FontStyle.Regular);
+            AddMenuItem(menu, "管理常用语…", () => OpenTemplateManager(), FontStyle.Regular);
+            AddMenuItem(menu, "管理群…", () => OpenGroupManager(), FontStyle.Regular);
+
+            menu.Show(_btnMoreMenu, new Point(0, _btnMoreMenu.Height));
+        }
+
+        private static void AddMenuItem(ContextMenuStrip menu, string text, Action action, FontStyle style)
+        {
+            var item = new ToolStripMenuItem(text);
+            item.Font = new Font(menu.Font, style);
+            item.Click += (s, e) => { try { action(); } catch { } };
+            menu.Items.Add(item);
+        }
+
+        /// <summary>创建格式按钮（保留旧方法兼容）</summary>
         private Button MakeFormatButton(string text, int width, Font font)
         {
             return new Button
@@ -1193,8 +1444,17 @@ namespace LarkSender.Forms
             var color = CurrentColor(out auto);
             string title = _txtCardTitle != null ? RealText(_txtCardTitle) : null;
 
-            CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked,
-                _chkPost.Checked, title, color, auto);
+            // 渲染时不要回写源文本（双向绑定的防循环措施）
+            _syncingPreview = true;
+            try
+            {
+                CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked,
+                    _chkPost.Checked, title, color, auto, AtAllInline);
+            }
+            finally
+            {
+                _syncingPreview = false;
+            }
         }
 
         private void DoSend()
@@ -1237,7 +1497,7 @@ namespace LarkSender.Forms
             var notifier = new Notifier();
             Task.Run(() =>
             {
-                var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor);
+                var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor, AtAllInline);
                 string colorName = autoColor ? "" : CardBuilder.ColorDisplayName(cardColor);
                 _logger.RecordSend(group.Name, text, atAll, result, "manual",
                     isCard ? "card" : "text", cardTitle, colorName);
