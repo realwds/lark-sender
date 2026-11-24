@@ -34,6 +34,13 @@ namespace LarkSender.Forms
         /// <summary>把 Markdown 渲染到 RichTextBox（模拟飞书卡片）</summary>
         public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard)
         {
+            Render(rtb, markdown, atAll, asCard, null, CardBuilder.HeaderColor.Blue, true);
+        }
+
+        /// <summary>带标题/颜色参数的渲染（卡片模式）</summary>
+        public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard,
+            string title, CardBuilder.HeaderColor color, bool autoColor)
+        {
             if (rtb == null) return;
 
             rtb.SuspendLayout();
@@ -42,13 +49,11 @@ namespace LarkSender.Forms
                 rtb.Clear();
                 rtb.BackColor = Color.White;
 
-                if (string.IsNullOrEmpty(markdown))
+                if (string.IsNullOrEmpty(markdown) && string.IsNullOrEmpty(title))
                 {
                     Append(rtb, "（在左侧输入内容，这里会显示效果）", TextMuted, rtb.Font, false);
                     return;
                 }
-
-                var lines = markdown.Replace("\r\n", "\n").Split('\n');
 
                 if (!asCard)
                 {
@@ -57,18 +62,38 @@ namespace LarkSender.Forms
                     {
                         Append(rtb, "@所有人\n", LinkColor, Bold(rtb.Font), false);
                     }
-                    Append(rtb, markdown, TextPrimary, rtb.Font, false);
+                    Append(rtb, markdown ?? "", TextPrimary, rtb.Font, false);
                     return;
                 }
 
                 // ===== 卡片模式 =====
                 var parsed = CardBuilder.Parse(markdown, atAll);
+
+                // 界面填的标题优先（用户不需要在正文里写 #）
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    parsed.Title = title.Trim();
+                    if (autoColor) parsed.Color = GuessColorPublic(parsed.Title);
+                    else parsed.Color = color;
+                }
+                else if (!autoColor)
+                {
+                    parsed.Color = color;
+                }
+
                 RenderCardPreview(rtb, parsed);
             }
             finally
             {
                 rtb.ResumeLayout();
             }
+        }
+
+        private static CardBuilder.HeaderColor GuessColorPublic(string title)
+        {
+            // 复用 CardBuilder 的关键词推断：构造一个带 # 的文本让它自己猜
+            var r = CardBuilder.Parse("# " + (title ?? ""), false);
+            return r.Color;
         }
 
         /// <summary>按卡片结构渲染（标题栏 + 元素）</summary>

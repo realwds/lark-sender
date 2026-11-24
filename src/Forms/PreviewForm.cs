@@ -19,16 +19,28 @@ namespace LarkSender.Forms
         private readonly string _text;
         private readonly bool _atAll;
         private readonly bool _isPost;
+        private readonly string _cardTitle;
+        private readonly CardBuilder.HeaderColor _cardColor;
+        private readonly bool _autoColor;
 
         private RichTextBox _rich;
         private TextBox _json;
         private SplitContainer _split;
 
         public PreviewForm(string text, bool atAll, bool isPost, string payload)
+            : this(text, atAll, isPost, payload, null, CardBuilder.HeaderColor.Blue, true)
+        {
+        }
+
+        public PreviewForm(string text, bool atAll, bool isPost, string payload,
+            string cardTitle, CardBuilder.HeaderColor color, bool autoColor)
         {
             _text = text ?? "";
             _atAll = atAll;
             _isPost = isPost;
+            _cardTitle = cardTitle;
+            _cardColor = color;
+            _autoColor = autoColor;
 
             InitUi(payload);
             RenderEffect();
@@ -160,7 +172,7 @@ namespace LarkSender.Forms
         /// <summary>在左侧按飞书卡片/纯文本的实际样式渲染</summary>
         private void RenderEffect()
         {
-            CardRenderer.Render(_rich, _text, _atAll, _isPost);
+            CardRenderer.Render(_rich, _text, _atAll, _isPost, _cardTitle, _cardColor, _autoColor);
         }
 
         private void CopyToClipboard(string content, string what)

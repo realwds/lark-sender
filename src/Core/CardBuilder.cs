@@ -50,6 +50,61 @@ namespace LarkSender.Core
         }
 
         /// <summary>
+        /// 直接指定标题和颜色构造卡片（供界面用：用户填标题框、选颜色）。
+        /// 正文里的 `# 标题` 会被忽略，以传入的 title 为准。
+        /// </summary>
+        public static Dictionary<string, object> BuildCardWithTitle(string title, string body, bool atAll,
+            HeaderColor color, bool autoColor)
+        {
+            var parsed = Parse(body, atAll);
+
+            // 正文里写了 # 标题但界面也填了标题 → 以界面为准，避免重复
+            string finalTitle = string.IsNullOrWhiteSpace(title) ? parsed.Title : title.Trim();
+            HeaderColor finalColor = autoColor ? GuessColor(finalTitle) : color;
+
+            var card = new Dictionary<string, object>();
+            card["config"] = new Dictionary<string, object>
+            {
+                { "wide_screen_mode", true }
+            };
+
+            if (!string.IsNullOrEmpty(finalTitle))
+            {
+                card["header"] = new Dictionary<string, object>
+                {
+                    { "title", new Dictionary<string, object> {
+                        { "tag", "plain_text" },
+                        { "content", finalTitle }
+                    }},
+                    { "template", ColorToTemplate(finalColor) }
+                };
+            }
+
+            card["elements"] = parsed.Elements;
+            return card;
+        }
+
+        /// <summary>颜色名称 → 枚举（供界面下拉框用）</summary>
+        public static HeaderColor ParseColorNamePublic(string name)
+        {
+            return ParseColorName(name);
+        }
+
+        public static string ColorDisplayName(HeaderColor c)
+        {
+            switch (c)
+            {
+                case HeaderColor.Green: return "绿";
+                case HeaderColor.Red: return "红";
+                case HeaderColor.Orange: return "橙";
+                case HeaderColor.Grey: return "灰";
+                case HeaderColor.Purple: return "紫";
+                case HeaderColor.Turquoise: return "青";
+                default: return "蓝";
+            }
+        }
+
+        /// <summary>
         /// 解析 Markdown 文本为卡片结构。
         /// </summary>
         public static CardResult Parse(string markdown, bool atAll)

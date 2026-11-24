@@ -25,11 +25,10 @@ namespace LarkSender.Forms
         private TextBox _box;
         private CheckBox _chkAll;
         private CheckBox _chkPost;
-        private Button _btnSyntaxTitle;
-        private Button _btnSyntaxList;
-        private Button _btnSyntaxBold;
-        private Button _btnSyntaxLink;
-        private Button _btnSyntaxHr;
+        private TextBox _txtCardTitle;
+        private ComboBox _cboColor;
+        private TableLayoutPanel _titleRow;
+        private List<Button> _fmtButtons;
         private RichTextBox _livePreview;
         private SplitContainer _editorSplit;
         private Label _lblStatus;
@@ -145,13 +144,14 @@ namespace LarkSender.Forms
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5
+                RowCount = 6
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 选群
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 模板
-            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // 输入框
-            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 选项
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 卡片标题（仅卡片模式）
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f)); // 输入框 + 预览
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 选项 + 格式
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 按钮
 
             // ---- 选群行 ----
@@ -335,12 +335,67 @@ namespace LarkSender.Forms
             editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.55);
             AddShownHandler(() => SafeSetSplitter(editorSplit, 0.55));
 
-            // ---- 选项行 ----
+            // ---- 卡片标题行（仅卡片模式可见）----
+            var titleRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 4,
+                RowCount = 1,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Margin = new Padding(0, 0, 0, 6),
+                Visible = false
+            };
+            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            titleRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92f));
+
+            titleRow.Controls.Add(new Label
+            {
+                Text = "卡片标题",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 6, 6, 0)
+            }, 0, 0);
+
+            _txtCardTitle = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 6, 0)
+            };
+            // .NET 4.0 没有 PlaceholderText，用灰色提示文字模拟
+            SetPlaceholder(_txtCardTitle, "例如：部署完成 / 周会提醒");
+            _txtCardTitle.TextChanged += (s, e) => RenderLivePreview();
+            titleRow.Controls.Add(_txtCardTitle, 1, 0);
+
+            titleRow.Controls.Add(new Label
+            {
+                Text = "颜色",
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 6, 6, 0)
+            }, 2, 0);
+
+            _cboColor = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Dock = DockStyle.Fill,
+                Margin = new Padding(0, 2, 0, 0)
+            };
+            _cboColor.Items.AddRange(new object[] { "自动", "蓝", "绿", "红", "橙", "灰", "紫", "青" });
+            _cboColor.SelectedIndex = 0;
+            _cboColor.SelectedIndexChanged += (s, e) => RenderLivePreview();
+            titleRow.Controls.Add(_cboColor, 3, 0);
+
+            _titleRow = titleRow;
+
+            // ---- 选项行（带格式工具栏）----
             var row4 = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
+                WrapContents = true,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Margin = new Padding(0, 0, 0, 6)
@@ -351,76 +406,57 @@ namespace LarkSender.Forms
                 Text = "艾特所有人",
                 AutoSize = true,
                 Checked = true,
-                Margin = new Padding(0, 4, 14, 0)
+                Margin = new Padding(0, 6, 14, 0)
             };
             _chkAll.CheckedChanged += (s, e) => RenderLivePreview();
             row4.Controls.Add(_chkAll);
 
             _chkPost = new CheckBox
             {
-                Text = "卡片模式",
+                Text = "卡片消息",
                 AutoSize = true,
-                Margin = new Padding(0, 4, 8, 0)
+                Margin = new Padding(0, 6, 14, 0)
             };
             _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
             row4.Controls.Add(_chkPost);
 
-            // 卡片语法快捷按钮：勾了卡片模式才显示
-            _btnSyntaxTitle = new Button
-            {
-                Text = "+ 标题",
-                Size = new Size(64, 24),
-                Margin = new Padding(0, 3, 4, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnSyntaxTitle.Click += (s, e) => InsertSyntax("# ");
-            row4.Controls.Add(_btnSyntaxTitle);
+            // 格式工具：不需要懂 Markdown，选中文字点按钮就行
+            _fmtButtons = new List<Button>();
 
-            _btnSyntaxList = new Button
-            {
-                Text = "+ 列表",
-                Size = new Size(64, 24),
-                Margin = new Padding(0, 3, 4, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnSyntaxList.Click += (s, e) => InsertSyntax("- ");
-            row4.Controls.Add(_btnSyntaxList);
+            var btnBold = MakeFormatButton("加粗", 52, new Font(Font, FontStyle.Bold));
+            btnBold.Click += (s, e) => WrapSelection("**", "**", "粗体文字");
+            row4.Controls.Add(btnBold);
+            _fmtButtons.Add(btnBold);
 
-            _btnSyntaxBold = new Button
-            {
-                Text = "B 加粗",
-                Size = new Size(64, 24),
-                Margin = new Padding(0, 3, 4, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false,
-                Font = new Font(Font, FontStyle.Bold)
-            };
-            _btnSyntaxBold.Click += (s, e) => InsertSyntax("**粗体**");
-            row4.Controls.Add(_btnSyntaxBold);
+            var btnItalic = MakeFormatButton("斜体", 52, new Font(Font, FontStyle.Italic));
+            btnItalic.Click += (s, e) => WrapSelection("*", "*", "斜体文字");
+            row4.Controls.Add(btnItalic);
+            _fmtButtons.Add(btnItalic);
 
-            _btnSyntaxLink = new Button
-            {
-                Text = "链接",
-                Size = new Size(56, 24),
-                Margin = new Padding(0, 3, 4, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnSyntaxLink.Click += (s, e) => InsertSyntax("[文字](https://)");
-            row4.Controls.Add(_btnSyntaxLink);
+            var btnStrike = MakeFormatButton("删除线", 62, new Font(Font, FontStyle.Strikeout));
+            btnStrike.Click += (s, e) => WrapSelection("~~", "~~", "删除文字");
+            row4.Controls.Add(btnStrike);
+            _fmtButtons.Add(btnStrike);
 
-            _btnSyntaxHr = new Button
-            {
-                Text = "分割线",
-                Size = new Size(64, 24),
-                Margin = new Padding(0, 3, 14, 0),
-                FlatStyle = FlatStyle.System,
-                Visible = false
-            };
-            _btnSyntaxHr.Click += (s, e) => InsertSyntax("\r\n---\r\n");
-            row4.Controls.Add(_btnSyntaxHr);
+            var btnBullet = MakeFormatButton("· 列表", 58, Font);
+            btnBullet.Click += (s, e) => InsertLinePrefix("- ");
+            row4.Controls.Add(btnBullet);
+            _fmtButtons.Add(btnBullet);
+
+            var btnNumber = MakeFormatButton("1. 编号", 64, Font);
+            btnNumber.Click += (s, e) => InsertLinePrefix("1. ");
+            row4.Controls.Add(btnNumber);
+            _fmtButtons.Add(btnNumber);
+
+            var btnLink = MakeFormatButton("链接", 52, Font);
+            btnLink.Click += (s, e) => InsertLink();
+            row4.Controls.Add(btnLink);
+            _fmtButtons.Add(btnLink);
+
+            var btnHr = MakeFormatButton("分割线", 62, Font);
+            btnHr.Click += (s, e) => InsertLinePrefix("---");
+            row4.Controls.Add(btnHr);
+            _fmtButtons.Add(btnHr);
 
             _lblStatus = new Label
             {
@@ -428,7 +464,7 @@ namespace LarkSender.Forms
                 Anchor = AnchorStyles.Left,
                 ForeColor = Color.DimGray,
                 Text = "Ctrl+Enter 快速发送",
-                Margin = new Padding(0, 6, 0, 0)
+                Margin = new Padding(0, 10, 0, 0)
             };
             row4.Controls.Add(_lblStatus);
 
@@ -461,9 +497,10 @@ namespace LarkSender.Forms
 
             root.Controls.Add(row1, 0, 0);
             root.Controls.Add(row2, 0, 1);
-            root.Controls.Add(editorSplit, 0, 2);
-            root.Controls.Add(row4, 0, 3);
-            root.Controls.Add(row5, 0, 4);
+            root.Controls.Add(titleRow, 0, 2);
+            root.Controls.Add(editorSplit, 0, 3);
+            root.Controls.Add(row4, 0, 4);
+            root.Controls.Add(row5, 0, 5);
             page.Controls.Add(root);
         }
 
@@ -779,7 +816,10 @@ namespace LarkSender.Forms
         private void ShowPreview()
         {
             var text = _box.Text;
-            if (string.IsNullOrWhiteSpace(text))
+            bool isCard = _chkPost.Checked;
+            string cardTitle = _txtCardTitle != null ? RealText(_txtCardTitle).Trim() : "";
+
+            if (string.IsNullOrWhiteSpace(text) && !(isCard && cardTitle.Length > 0))
             {
                 MessageBox.Show("请先输入内容。", "内容为空", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -787,13 +827,16 @@ namespace LarkSender.Forms
 
             var name = _cboGroup.SelectedItem as string;
             var g = name != null ? ConfigStore.FindGroup(_cfg, name) : null;
-            var kind = _chkPost.Checked ? MessageKind.Card : MessageKind.Text;
+            var kind = isCard ? MessageKind.Card : MessageKind.Text;
+            bool autoColor;
+            var cardColor = CurrentColor(out autoColor);
 
             string payload;
             try
             {
                 var notifier = new Notifier();
-                payload = notifier.BuildPayload(text, _chkAll.Checked, g != null ? g.Secret : null, kind);
+                payload = notifier.BuildPayload(text, _chkAll.Checked,
+                    g != null ? g.Secret : null, kind, cardTitle, cardColor, autoColor);
             }
             catch (Exception ex)
             {
@@ -801,25 +844,26 @@ namespace LarkSender.Forms
                 return;
             }
 
-            using (var dlg = new PreviewForm(text, _chkAll.Checked, _chkPost.Checked, payload))
+            using (var dlg = new PreviewForm(text, _chkAll.Checked, isCard, payload, cardTitle, cardColor, autoColor))
             {
                 dlg.ShowDialog(this);
             }
         }
 
-        /// <summary>勾选/取消卡片模式时，控制语法按钮的显隐并提示语法</summary>
+        /// <summary>勾选/取消卡片模式时，显示标题行与格式按钮</summary>
         private void UpdatePostHint()
         {
             bool on = _chkPost.Checked;
-            _btnSyntaxTitle.Visible = on;
-            _btnSyntaxList.Visible = on;
-            _btnSyntaxBold.Visible = on;
-            _btnSyntaxLink.Visible = on;
-            _btnSyntaxHr.Visible = on;
+
+            _titleRow.Visible = on;
+            if (_fmtButtons != null)
+            {
+                foreach (var b in _fmtButtons) b.Visible = on;
+            }
 
             if (on)
             {
-                SetStatus("卡片：# 标题 · - 列表 · **加粗** · [链接](url) · --- 分割线",
+                SetStatus("选中文字后点按钮就能改格式，不需懂 Markdown",
                     Color.FromArgb(37, 99, 235));
             }
             else
@@ -830,51 +874,153 @@ namespace LarkSender.Forms
             RenderLivePreview();
         }
 
-        /// <summary>在光标处插入语法片段</summary>
-        private void InsertSyntax(string snippet)
+        /// <summary>取当前选的颜色（自动 = 根据标题猜）</summary>
+        private CardBuilder.HeaderColor CurrentColor(out bool auto)
+        {
+            int idx = _cboColor != null ? _cboColor.SelectedIndex : 0;
+            auto = idx <= 0;
+            if (auto) return CardBuilder.HeaderColor.Blue;
+
+            switch (idx)
+            {
+                case 1: return CardBuilder.HeaderColor.Blue;
+                case 2: return CardBuilder.HeaderColor.Green;
+                case 3: return CardBuilder.HeaderColor.Red;
+                case 4: return CardBuilder.HeaderColor.Orange;
+                case 5: return CardBuilder.HeaderColor.Grey;
+                case 6: return CardBuilder.HeaderColor.Purple;
+                case 7: return CardBuilder.HeaderColor.Turquoise;
+                default: return CardBuilder.HeaderColor.Blue;
+            }
+        }
+
+        /// <summary>为 TextBox 模拟占位文字（.NET 4.0 无 PlaceholderText）</summary>
+        private static void SetPlaceholder(TextBox tb, string hint)
+        {
+            if (tb == null) return;
+            tb.ForeColor = Color.Gray;
+            tb.Text = hint;
+            bool showing = true;
+
+            tb.GotFocus += (s, e) =>
+            {
+                if (showing) { tb.Text = ""; tb.ForeColor = Color.Black; showing = false; }
+            };
+            tb.LostFocus += (s, e) =>
+            {
+                if (tb.Text.Trim().Length == 0)
+                {
+                    tb.Text = hint; tb.ForeColor = Color.Gray; showing = true;
+                }
+            };
+            // 对外提供“真实值”判断
+            tb.Tag = (Func<bool>)(() => !showing);
+        }
+
+        /// <summary>取 TextBox 真实输入（排除占位符）</summary>
+        private static string RealText(TextBox tb)
+        {
+            if (tb == null) return "";
+            var isReal = tb.Tag as Func<bool>;
+            if (isReal != null && !isReal()) return "";
+            return tb.Text ?? "";
+        }
+
+        /// <summary>清空 TextBox 并恢复占位符</summary>
+        private static void ClearWithPlaceholder(TextBox tb, string hint)
+        {
+            if (tb == null) return;
+            tb.Text = hint;
+            tb.ForeColor = Color.Gray;
+            tb.Tag = (Func<bool>)(() => false);
+        }
+
+        /// <summary>创建格式按钮（统一样式）</summary>
+        private Button MakeFormatButton(string text, int width, Font font)
+        {
+            return new Button
+            {
+                Text = text,
+                Size = new Size(width, 26),
+                Margin = new Padding(0, 4, 4, 0),
+                FlatStyle = FlatStyle.System,
+                Font = font,
+                Visible = false
+            };
+        }
+
+        /// <summary>
+        /// 用标记包裹选中文字（没选区就插入占位符并选中它）。
+        /// 这是非技术用户的主要交互方式：选中一段字 → 点「加粗」。
+        /// </summary>
+        private void WrapSelection(string prefix, string suffix, string placeholder)
         {
             int start = _box.SelectionStart;
+            int len = _box.SelectionLength;
 
-            // 对标题/列表：只在行首插入，如果光标不在行首，先换行
-            if (snippet == "# " || snippet == "- ")
+            if (len > 0)
             {
-                bool atLineStart = start == 0 || _box.Text[start - 1] == '\n';
-                if (!atLineStart)
-                {
-                    _box.Text = _box.Text.Insert(start, "\r\n" + snippet);
-                    _box.SelectionStart = start + 2 + snippet.Length;
-                }
-                else
-                {
-                    _box.Text = _box.Text.Insert(start, snippet);
-                    _box.SelectionStart = start + snippet.Length;
-                }
-            }
-            else if (snippet == "**粗体**")
-            {
-                // 如果有选中文本，包住它；否则插入占位符并选中中间
-                if (_box.SelectionLength > 0)
-                {
-                    var selected = _box.Text.Substring(_box.SelectionStart, _box.SelectionLength);
-                    _box.Text = _box.Text.Remove(_box.SelectionStart, _box.SelectionLength)
-                                         .Insert(_box.SelectionStart, "**" + selected + "**");
-                    _box.SelectionStart = start + 2 + selected.Length + 2;
-                }
-                else
-                {
-                    _box.Text = _box.Text.Insert(start, "**粗体**");
-                    // 选中「粗体」两个字，方便直接改
-                    _box.SelectionStart = start + 2;
-                    _box.SelectionLength = 2;
-                }
+                var selected = _box.Text.Substring(start, len);
+                _box.Text = _box.Text.Remove(start, len).Insert(start, prefix + selected + suffix);
+                _box.SelectionStart = start + prefix.Length + len + suffix.Length;
+                _box.SelectionLength = 0;
             }
             else
             {
-                _box.Text = _box.Text.Insert(start, snippet);
-                _box.SelectionStart = start + snippet.Length;
+                _box.Text = _box.Text.Insert(start, prefix + placeholder + suffix);
+                // 选中占位符，直接打字就能替换
+                _box.SelectionStart = start + prefix.Length;
+                _box.SelectionLength = placeholder.Length;
             }
 
             _box.Focus();
+            RenderLivePreview();
+        }
+
+        /// <summary>在当前行首插入前缀（列表、编号、分割线）</summary>
+        private void InsertLinePrefix(string prefix)
+        {
+            int caret = _box.SelectionStart;
+            int lineStart = _box.Text.LastIndexOf('\n', Math.Max(0, caret - 1)) + 1;
+            if (caret == 0) lineStart = 0;
+
+            // 分割线单独一行
+            if (prefix == "---")
+            {
+                var before = _box.Text.Substring(0, lineStart);
+                var after = _box.Text.Substring(lineStart);
+                var needNl = before.Length > 0 && !before.EndsWith("\n") ? "\r\n" : "";
+                _box.Text = before + needNl + "---\r\n" + after;
+                _box.SelectionStart = before.Length + needNl.Length + 5;
+            }
+            else
+            {
+                _box.Text = _box.Text.Insert(lineStart, prefix);
+                _box.SelectionStart = caret + prefix.Length;
+            }
+
+            _box.Focus();
+            RenderLivePreview();
+        }
+
+        /// <summary>插入链接：有选中文字就用它做文字，否则插入占位</summary>
+        private void InsertLink()
+        {
+            int start = _box.SelectionStart;
+            int len = _box.SelectionLength;
+            string label = len > 0 ? _box.Text.Substring(start, len) : "链接文字";
+            string snippet = "[" + label + "](https://)";
+
+            if (len > 0) _box.Text = _box.Text.Remove(start, len).Insert(start, snippet);
+            else _box.Text = _box.Text.Insert(start, snippet);
+
+            // 光标定位到 https:// 后面，方便直接粘地址
+            int urlStart = start + 1 + label.Length + 2;
+            _box.SelectionStart = urlStart;
+            _box.SelectionLength = 0;
+
+            _box.Focus();
+            RenderLivePreview();
         }
 
         /// <summary>
@@ -884,7 +1030,13 @@ namespace LarkSender.Forms
         private void RenderLivePreview()
         {
             if (_livePreview == null) return;
-            CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked, _chkPost.Checked);
+
+            bool auto;
+            var color = CurrentColor(out auto);
+            string title = _txtCardTitle != null ? RealText(_txtCardTitle) : null;
+
+            CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked,
+                _chkPost.Checked, title, color, auto);
         }
 
         private void DoSend()
@@ -900,7 +1052,11 @@ namespace LarkSender.Forms
             }
 
             var text = _box.Text;
-            if (string.IsNullOrWhiteSpace(text))
+            bool isCard = _chkPost.Checked;
+            string cardTitle = _txtCardTitle != null ? RealText(_txtCardTitle).Trim() : "";
+
+            // 卡片模式允许只有标题没正文
+            if (string.IsNullOrWhiteSpace(text) && !(isCard && cardTitle.Length > 0))
             {
                 SetStatus("内容为空，没发出去", Color.Firebrick);
                 _box.Focus();
@@ -910,8 +1066,10 @@ namespace LarkSender.Forms
             var group = ConfigStore.FindGroup(_cfg, name);
             if (group == null) return;
 
-            var kind = _chkPost.Checked ? MessageKind.Card : MessageKind.Text;
+            var kind = isCard ? MessageKind.Card : MessageKind.Text;
             bool atAll = _chkAll.Checked;
+            bool autoColor;
+            var cardColor = CurrentColor(out autoColor);
 
             _busy = true;
             _btnSend.Enabled = false;
@@ -921,7 +1079,7 @@ namespace LarkSender.Forms
             var notifier = new Notifier();
             Task.Run(() =>
             {
-                var result = notifier.Send(group, text, atAll, kind);
+                var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor);
                 _logger.RecordSend(group.Name, text, atAll, result, "manual");
                 return result;
             }).ContinueWith(t =>
@@ -941,9 +1099,13 @@ namespace LarkSender.Forms
                     {
                         SetStatus("已发送到 " + name, Color.ForestGreen);
                         RefreshHistory();
-                        var timer = new System.Windows.Forms.Timer { Interval = 700 };
-                        timer.Tick += (s2, e2) => { timer.Stop(); timer.Dispose(); Close(); };
-                        timer.Start();
+
+                        // 发送成功后留在窗口：清空输入框并聚焦，方便接着发下一条。
+                        // 不自动关窗——用户经常要连发多条。
+                        _box.Clear();
+                        ClearWithPlaceholder(_txtCardTitle, "例如：部署完成 / 周会提醒");
+                        _box.Focus();
+                        RenderLivePreview();
                     }
                     else
                     {
@@ -997,7 +1159,6 @@ namespace LarkSender.Forms
                         + "\n时间：" + dlg.CreatedJob.RunAt
                         + "\n类型：" + dlg.CreatedJob.KindDisplay,
                         "创建成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                    Close();
                 }
                 catch (Exception ex)
                 {

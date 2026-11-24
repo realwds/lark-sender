@@ -229,12 +229,21 @@ namespace LarkSender.Core
         /// <summary>构造发送用的 JSON</summary>
         public string BuildPayload(string text, bool atAll, string secret, MessageKind kind)
         {
+            return BuildPayload(text, atAll, secret, kind, null, CardBuilder.HeaderColor.Blue, true);
+        }
+
+        /// <summary>
+        /// 构造发送用的 JSON（卡片模式可显式指定标题与颜色）。
+        /// </summary>
+        public string BuildPayload(string text, bool atAll, string secret, MessageKind kind,
+            string cardTitle, CardBuilder.HeaderColor color, bool autoColor)
+        {
             var payload = new Dictionary<string, object>();
 
             if (kind == MessageKind.Card)
             {
                 payload["msg_type"] = "interactive";
-                payload["card"] = CardBuilder.BuildCard(text, atAll);
+                payload["card"] = CardBuilder.BuildCardWithTitle(cardTitle, text, atAll, color, autoColor);
             }
             else
             {
@@ -254,6 +263,34 @@ namespace LarkSender.Core
             }
 
             return Json.Serialize(payload);
+        }
+
+        /// <summary>发送（卡片模式可指定标题与颜色）</summary>
+        public SendResult Send(GroupConfig group, string text, bool atAll, MessageKind kind,
+            string cardTitle, CardBuilder.HeaderColor color, bool autoColor)
+        {
+            if (group == null)
+                return SendResult.Fail("未指定群", "", false, 0);
+
+            if (!group.HasWebhook)
+                return SendResult.Fail(
+                    "群「" + group.Name + "」没有配置 webhook。",
+                    "", false, 0);
+
+            if (string.IsNullOrWhiteSpace(text) && string.IsNullOrWhiteSpace(cardTitle))
+                return SendResult.Fail("消息内容为空。", "", false, 0);
+
+            string payload;
+            try
+            {
+                payload = BuildPayload(text, atAll, group.Secret, kind, cardTitle, color, autoColor);
+            }
+            catch (Exception ex)
+            {
+                return SendResult.Fail("构造消息失败：" + ex.Message, "", false, 0);
+            }
+
+            return PostWithRetry(group.Webhook.Trim(), payload);
         }
 
         /// <summary>
