@@ -521,7 +521,6 @@ namespace LarkSender.Tests
                 Eq(logger.ReadHistory(10).Count, 1, "传空不影响记录");
 
                 Section("历史记录 - 旧格式兼容");
-
                 // 旧记录没有 id 字段，应能读取并生成稳定 id
                 string legacy = "{\"time\":\"2026-01-01 10:00:00\",\"group\":\"老群\",\"text\":\"老内容\",\"atAll\":false,\"ok\":true,\"attempts\":1,\"error\":\"\",\"source\":\"cli\"}";
                 File.WriteAllText(histPath, legacy + "\n", new UTF8Encoding(false));
@@ -539,6 +538,29 @@ namespace LarkSender.Tests
                 // 旧记录也能被删除
                 Eq(logger.DeleteHistory(new[] { id1 }), 1, "旧记录可删除");
                 Eq(logger.ReadHistory(10).Count, 0, "旧记录删除后为空");
+
+                Section("历史记录 - 卡片字段");
+
+                logger.RecordSend("卡片群", "**加粗**正文", false,
+                    SendResult.Success("ok", 1), "manual", "card", "部署完成", "绿");
+
+                var cardEntry = logger.ReadHistory(10)[0];
+                Eq(cardEntry.Kind, "card", "卡片类型被保存");
+                Eq(cardEntry.CardTitle, "部署完成", "卡片标题被保存");
+                Eq(cardEntry.CardColor, "绿", "卡片颜色被保存");
+                Ok(cardEntry.IsCard, "IsCard 判断正确");
+
+                // 纯文本记录
+                logger.RecordSend("文本群", "纯文本", false,
+                    SendResult.Success("ok", 1), "manual", "text", null, null);
+                var textEntry = logger.ReadHistory(10)[0];
+                Eq(textEntry.Kind, "text", "文本类型被保存");
+                Ok(!textEntry.IsCard, "IsCard=false");
+                Eq(textEntry.CardTitle ?? "", "", "文本记录无卡片标题");
+
+                // 旧格式（无 kind 字段）默认按 text
+                Eq(legacyList[0].Kind, "text", "旧记录默认 kind=text");
+                Ok(!legacyList[0].IsCard, "旧记录 IsCard=false");
             }
             finally
             {

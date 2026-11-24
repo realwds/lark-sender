@@ -41,6 +41,8 @@ namespace LarkSender.Forms
 
         // 历史页
         private ListView _lvHistory;
+        private RichTextBox _historyPreview;
+        private SplitContainer _historySplit;
 
         private TabControl _tabs;
 
@@ -574,21 +576,65 @@ namespace LarkSender.Forms
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
+            // 左：历史列表；右：选中记录的渲染预览
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 6,
+                Margin = new Padding(0, 0, 0, 8),
+                Panel1MinSize = 100,
+                Panel2MinSize = 100
+            };
+
             _lvHistory = new ListView
             {
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
-                MultiSelect = false,
+                MultiSelect = true,
                 Dock = DockStyle.Fill,
-                Margin = new Padding(0, 0, 0, 8)
+                BorderStyle = BorderStyle.None
             };
-            _lvHistory.Columns.Add("时间", 140);
-            _lvHistory.Columns.Add("结果", 55);
-            _lvHistory.Columns.Add("群", 110);
-            _lvHistory.Columns.Add("内容", 300);
-            _lvHistory.MultiSelect = true;
-            _lvHistory.DoubleClick += (s, e) => CopyHistoryText();
+            _lvHistory.Columns.Add("时间", 130);
+            _lvHistory.Columns.Add("结果", 50);
+            _lvHistory.Columns.Add("群", 100);
+            _lvHistory.Columns.Add("内容", 200);
+            _lvHistory.SelectedIndexChanged += (s, e) => ShowSelectedHistoryPreview();
+
+            var lvHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(2) };
+            lvHost.Controls.Add(_lvHistory);
+            split.Panel1.Controls.Add(lvHost);
+
+            // 右侧预览区
+            _historyPreview = new RichTextBox
+            {
+                Dock = DockStyle.Fill,
+                ReadOnly = true,
+                BorderStyle = BorderStyle.None,
+                BackColor = Color.White,
+                Font = new Font("Microsoft YaHei UI", 10f),
+                DetectUrls = false,
+                ScrollBars = RichTextBoxScrollBars.Vertical
+            };
+            var previewHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(4) };
+            var previewLabel = new Label
+            {
+                Text = "预览",
+                Dock = DockStyle.Top,
+                Height = 20,
+                ForeColor = Color.DimGray,
+                BackColor = Color.FromArgb(246, 248, 250),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(4, 0, 0, 0)
+            };
+            previewHost.Controls.Add(_historyPreview);
+            previewHost.Controls.Add(previewLabel);
+            split.Panel2.Controls.Add(previewHost);
+
+            _historySplit = split;
+            split.SizeChanged += (s, e) => SafeSetSplitter(split, 0.48);
+            AddShownHandler(() => SafeSetSplitter(split, 0.48));
 
             var btnRow = new FlowLayoutPanel
             {
@@ -604,7 +650,11 @@ namespace LarkSender.Forms
             btnReload.Click += (s, e) => RefreshHistory();
             btnRow.Controls.Add(btnReload);
 
-            var btnCopy = new Button { Text = "复制内容", Size = new Size(90, 32), Margin = new Padding(0, 0, 6, 0) };
+            var btnPreview = new Button { Text = "大图预览", Size = new Size(90, 32), Margin = new Padding(0, 0, 6, 0) };
+            btnPreview.Click += (s, e) => OpenHistoryPreviewWindow();
+            btnRow.Controls.Add(btnPreview);
+
+            var btnCopy = new Button { Text = "复制原文", Size = new Size(90, 32), Margin = new Padding(0, 0, 6, 0) };
             btnCopy.Click += (s, e) => CopyHistoryText();
             btnRow.Controls.Add(btnCopy);
 
@@ -620,11 +670,11 @@ namespace LarkSender.Forms
             {
                 AutoSize = true,
                 ForeColor = Color.DimGray,
-                Text = "双击可复制内容（可多选）",
+                Text = "选中记录可在右侧预览效果",
                 Margin = new Padding(0, 8, 0, 0)
             });
 
-            root.Controls.Add(_lvHistory, 0, 0);
+            root.Controls.Add(split, 0, 0);
             root.Controls.Add(btnRow, 0, 1);
             page.Controls.Add(root);
         }
@@ -743,6 +793,114 @@ namespace LarkSender.Forms
             }
         }
 
+        /// <summary>把选中历史记录渲染到右侧预览区</summary>
+        private void ShowSelectedHistoryPreview()
+        {
+            if (_historyPreview == null) return;
+
+            if (_lvHistory.SelectedItems.Count == 0)
+            {
+                _historyPreview.Clear();
+                CardRenderer.AppendHint(_historyPreview, "在左侧选中一条记录，这里会显示发送时的效果");
+                return;
+            }
+
+            if (_lvHistory.SelectedItems.Count > 1)
+            {
+                CardRenderer.AppendHint(_historyPreview,
+                    "已选中 " + _lvHistory.SelectedItems.Count + " 条，右侧只预览第一条");
+            }
+
+            var entry = _lvHistory.SelectedItems[0].Tag as HistoryEntry;
+            if (entry == null) return;
+
+            var color = EntryColor(entry);
+            CardRenderer.Render(_historyPreview, entry.Text, entry.AtAll, entry.IsCard,
+                entry.CardTitle, color, string.IsNullOrEmpty(entry.CardColor));
+        }
+
+        /// <summary>从历史记录里还原卡片颜色</summary>
+        private static CardBuilder.HeaderColor EntryColor(HistoryEntry entry)
+        {
+            if (entry == null || string.IsNullOrEmpty(entry.CardColor))
+                return CardBuilder.HeaderColor.Blue;
+            return CardBuilder.ParseColorNamePublic(entry.CardColor);
+        }
+
+        /// <summary>用大窗口预览选中历史（左边效果、右边 JSON 的完整版）</summary>
+        private void OpenHistoryPreviewWindow()
+        {
+            if (_lvHistory.SelectedItems.Count == 0)
+            {
+                MessageBox.Show("请先选中一条历史记录。", "未选中",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var entry = _lvHistory.SelectedItems[0].Tag as HistoryEntry;
+            if (entry == null) return;
+
+            string payload = "";
+            try
+            {
+                var notifier = new Notifier();
+                bool auto = string.IsNullOrEmpty(entry.CardColor);
+                payload = notifier.BuildPayload(
+                    entry.Text, entry.AtAll, null,
+                    entry.IsCard ? MessageKind.Card : MessageKind.Text,
+                    entry.CardTitle, EntryColor(entry), auto);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("构造预览失败：" + ex.Message, "错误",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            using (var dlg = new PreviewForm(entry.Text, entry.AtAll, entry.IsCard, payload,
+                entry.CardTitle, EntryColor(entry), string.IsNullOrEmpty(entry.CardColor)))
+            {
+                dlg.ShowDialog(this);
+            }
+        }
+
+        /// <summary>
+        /// 生成历史列表的摘要文字：去掉 Markdown 符号，卡片则优先用标题。
+        /// 用户看到的是“部署完成 v2.3”而不是“# 部署完成 v2.3”。
+        /// </summary>
+        private static string MakeSummary(HistoryEntry h)
+        {
+            if (h == null) return "";
+
+            // 卡片：有标题就用标题
+            if (h.IsCard && !string.IsNullOrWhiteSpace(h.CardTitle))
+            {
+                var t = "[卡片] " + h.CardTitle.Trim();
+                if (t.Length > 60) t = t.Substring(0, 60) + "…";
+                return t;
+            }
+
+            var text = h.Text ?? "";
+            // 取第一行非空内容
+            string line = "";
+            foreach (var raw in text.Split('\n'))
+            {
+                var t = raw.Trim();
+                if (t.Length == 0) continue;
+                line = t;
+                break;
+            }
+
+            // 去掉常见 Markdown 标记
+            line = System.Text.RegularExpressions.Regex.Replace(line, @"^#{1,6}\s*", "");   // 标题
+            line = System.Text.RegularExpressions.Regex.Replace(line, @"^[-*+]\s+", "");     // 列表
+            line = System.Text.RegularExpressions.Regex.Replace(line, @"^>\s*", "");         // 引用
+            line = System.Text.RegularExpressions.Regex.Replace(line, @"^\d+\.\s+", "");     // 有序列表
+
+            if (line.Length > 60) line = line.Substring(0, 60) + "…";
+            return h.IsCard ? "[卡片] " + line : line;
+        }
+
         private void RefreshHistory()
         {
             _lvHistory.BeginUpdate();
@@ -753,8 +911,8 @@ namespace LarkSender.Forms
 
                 foreach (var h in entries)
                 {
-                    var one = (h.Text ?? "").Split('\n')[0].Trim();
-                    if (one.Length > 60) one = one.Substring(0, 60) + "…";
+                    // 列表里显示可读摘要，去掉 Markdown 符号
+                    var one = MakeSummary(h);
 
                     var it = new ListViewItem(h.Time ?? "");
                     it.SubItems.Add(h.Ok ? "成功" : "失败");
@@ -1080,7 +1238,9 @@ namespace LarkSender.Forms
             Task.Run(() =>
             {
                 var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor);
-                _logger.RecordSend(group.Name, text, atAll, result, "manual");
+                string colorName = autoColor ? "" : CardBuilder.ColorDisplayName(cardColor);
+                _logger.RecordSend(group.Name, text, atAll, result, "manual",
+                    isCard ? "card" : "text", cardTitle, colorName);
                 return result;
             }).ContinueWith(t =>
             {

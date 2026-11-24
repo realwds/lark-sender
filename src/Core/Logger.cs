@@ -41,9 +41,18 @@ namespace LarkSender.Core
         /// <summary>记录一次发送（同时写文本日志和结构化历史）</summary>
         public void RecordSend(string groupName, string text, bool atAll, SendResult result, string source)
         {
+            RecordSend(groupName, text, atAll, result, source, "text", null, null);
+        }
+
+        /// <summary>记录一次发送（带消息类型与卡片信息）</summary>
+        public void RecordSend(string groupName, string text, bool atAll, SendResult result, string source,
+            string kind, string cardTitle, string cardColor)
+        {
             if (result == null) result = SendResult.Fail("未知结果", "", false, 0);
 
             string first = FirstLine(text, 120);
+            if (string.IsNullOrEmpty(first) && !string.IsNullOrEmpty(cardTitle))
+                first = "[卡片] " + cardTitle;
             string status = result.Ok ? "OK  " : "FAIL";
 
             string detail = result.Ok ? "发送成功" : result.Error;
@@ -60,7 +69,7 @@ namespace LarkSender.Core
                 detail);
 
             AppendLogLine(line);
-            AppendHistory(groupName, text, atAll, result, source);
+            AppendHistory(groupName, text, atAll, result, source, kind, cardTitle, cardColor);
         }
 
         /// <summary>记录一条普通运行日志（非发送）</summary>
@@ -223,7 +232,8 @@ namespace LarkSender.Core
             }
         }
 
-        private void AppendHistory(string groupName, string text, bool atAll, SendResult result, string source)
+        private void AppendHistory(string groupName, string text, bool atAll, SendResult result, string source,
+            string kind, string cardTitle, string cardColor)
         {
             lock (_lock)
             {
@@ -241,7 +251,10 @@ namespace LarkSender.Core
                         Ok = result.Ok,
                         Attempts = result.Attempts,
                         Error = result.Error ?? "",
-                        Source = source ?? ""
+                        Source = source ?? "",
+                        Kind = kind ?? "text",
+                        CardTitle = cardTitle ?? "",
+                        CardColor = cardColor ?? ""
                     };
 
                     File.AppendAllText(_historyPath, entry.ToJson() + "\n", new UTF8Encoding(false));
@@ -299,6 +312,34 @@ namespace LarkSender.Core
         public string Error { get; set; }
         public string Source { get; set; }
 
+        /// <summary>发送时的消息类型：text / card</summary>
+        public string Kind { get; set; }
+
+        /// <summary>卡片标题（仅 card 类型有效）</summary>
+        public string CardTitle { get; set; }
+
+        /// <summary>卡片颜色名（绿/红/橙/灰/紫/青/蓝，空=自动）</summary>
+        public string CardColor { get; set; }
+
+        public HistoryEntry()
+        {
+            Id = "";
+            Time = "";
+            Group = "";
+            Text = "";
+            Error = "";
+            Source = "";
+            Kind = "text";
+            CardTitle = "";
+            CardColor = "";
+        }
+
+        /// <summary>是否卡片消息</summary>
+        public bool IsCard
+        {
+            get { return string.Equals(Kind, "card", StringComparison.OrdinalIgnoreCase); }
+        }
+
         public string ToJson()
         {
             return Json.Serialize(new Dictionary<string, object>
@@ -311,7 +352,10 @@ namespace LarkSender.Core
                 { "ok", Ok },
                 { "attempts", Attempts },
                 { "error", Error ?? "" },
-                { "source", Source ?? "" }
+                { "source", Source ?? "" },
+                { "kind", Kind ?? "text" },
+                { "cardTitle", CardTitle ?? "" },
+                { "cardColor", CardColor ?? "" }
             });
         }
 
@@ -330,7 +374,10 @@ namespace LarkSender.Core
                     Ok = Json.GetBool(o, "ok", false),
                     Attempts = Json.GetInt(o, "attempts", 1),
                     Error = Json.GetString(o, "error", ""),
-                    Source = Json.GetString(o, "source", "")
+                    Source = Json.GetString(o, "source", ""),
+                    Kind = Json.GetString(o, "kind", "text"),
+                    CardTitle = Json.GetString(o, "cardTitle", ""),
+                    CardColor = Json.GetString(o, "cardColor", "")
                 };
 
                 // 旧版本记录没有 id，用行内容的哈希补一个，保证同一条记录 id 稳定

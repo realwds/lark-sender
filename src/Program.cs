@@ -114,8 +114,19 @@ namespace LarkSender
                 }
 
                 var kind = post ? MessageKind.Card : MessageKind.Text;
-                var result = notifier.Send(group, text, atAll, kind);
-                logger.RecordSend(group.Name, text, atAll, result, "cli");
+
+                // 命令行模式：如果正文第一行是 `# 标题`，提取为卡片标题
+                string cliCardTitle = null;
+                if (post)
+                {
+                    var parsed = CardBuilder.Parse(text, atAll);
+                    if (!string.IsNullOrEmpty(parsed.Title)) cliCardTitle = parsed.Title;
+                }
+
+                var result = notifier.Send(group, text, atAll, kind, cliCardTitle,
+                    CardBuilder.HeaderColor.Blue, true);
+                logger.RecordSend(group.Name, text, atAll, result, "cli",
+                    post ? "card" : "text", cliCardTitle, "");
 
                 if (result.Ok)
                 {

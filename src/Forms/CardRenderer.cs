@@ -31,6 +31,13 @@ namespace LarkSender.Forms
         private static readonly Color LinkColor = Color.FromArgb(37, 99, 235);
         private static readonly Color CodeBg = Color.FromArgb(243, 244, 246);
 
+        /// <summary>在空预览区追加提示文字</summary>
+        public static void AppendHint(RichTextBox rtb, string hint)
+        {
+            if (rtb == null) return;
+            Append(rtb, hint, TextMuted, rtb.Font, false);
+        }
+
         /// <summary>把 Markdown 渲染到 RichTextBox（模拟飞书卡片）</summary>
         public static void Render(RichTextBox rtb, string markdown, bool atAll, bool asCard)
         {
