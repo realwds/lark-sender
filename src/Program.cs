@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -113,7 +113,7 @@ namespace LarkSender
                     }
                 }
 
-                var kind = post ? MessageKind.Post : MessageKind.Text;
+                var kind = post ? MessageKind.Card : MessageKind.Text;
                 var result = notifier.Send(group, text, atAll, kind);
                 logger.RecordSend(group.Name, text, atAll, result, "cli");
 

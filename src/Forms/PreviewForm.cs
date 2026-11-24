@@ -37,8 +37,8 @@ namespace LarkSender.Forms
         private void InitUi(string payload)
         {
             Text = "发送预览";
-            Size = new Size(1080, 660);
-            MinimumSize = new Size(820, 480);
+            Size = new Size(1180, 680);
+            MinimumSize = new Size(860, 480);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -58,7 +58,7 @@ namespace LarkSender.Forms
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = Color.DimGray,
                 Text = _isPost
-                    ? "左侧按飞书富文本样式渲染；右侧是实际发送的 JSON"
+                    ? "左侧按飞书卡片样式渲染；右侧是实际发送的 JSON"
                     : "左侧是纯文本效果；右侧是实际发送的 JSON"
             });
 
@@ -100,7 +100,7 @@ namespace LarkSender.Forms
             {
                 try
                 {
-                    int target = (int)(_split.Width * 0.45);
+                    int target = (int)(_split.Width * 0.42);
                     int max = _split.Width - _split.Panel2MinSize - _split.SplitterWidth;
                     if (target < _split.Panel1MinSize) target = _split.Panel1MinSize;
                     if (max > 0 && target > max) target = max;
@@ -157,118 +157,10 @@ namespace LarkSender.Forms
             AcceptButton = btnClose;
         }
 
-        /// <summary>在左侧按飞书 post 语义渲染效果</summary>
+        /// <summary>在左侧按飞书卡片/纯文本的实际样式渲染</summary>
         private void RenderEffect()
         {
-            _rich.Clear();
-            _rich.SuspendLayout();
-
-            try
-            {
-                // @所有人 提示条
-                if (_atAll)
-                {
-                    AppendStyled("所有人", Color.FromArgb(37, 99, 235), new Font(_rich.Font, FontStyle.Bold), false);
-                    AppendStyled("  ", Color.Black, _rich.Font, false);
-                }
-
-                var lines = _text.Split('\n');
-                for (int idx = 0; idx < lines.Length; idx++)
-                {
-                    var line = lines[idx].TrimEnd('\r');
-                    if (idx > 0) AppendStyled("\n", Color.Black, _rich.Font, false);
-
-                    if (!_isPost)
-                    {
-                        // 纯文本模式：原样显示，不做任何渲染
-                        AppendStyled(line, Color.Black, _rich.Font, false);
-                        continue;
-                    }
-
-                    RenderPostLine(line);
-                }
-            }
-            finally
-            {
-                _rich.ResumeLayout();
-            }
-        }
-
-        /// <summary>渲染一行 post 语法的内容</summary>
-        private void RenderPostLine(string line)
-        {
-            if (line.Length == 0) return;
-
-            // `# 标题` → 加粗放大
-            if (line.StartsWith("# "))
-            {
-                var f = new Font(_rich.Font.FontFamily, _rich.Font.Size + 2.5f, FontStyle.Bold);
-                AppendStyled(line.Substring(2).Trim(), Color.FromArgb(17, 24, 39), f, false);
-                return;
-            }
-
-            // `- 列表` → 圆点 + 缩进
-            if (line.StartsWith("- ") || line.StartsWith("* "))
-            {
-                AppendStyled("  •  ", Color.FromArgb(107, 114, 128), _rich.Font, false);
-                RenderInline(line.Substring(2));
-                return;
-            }
-
-            RenderInline(line);
-        }
-
-        /// <summary>渲染行内 `**加粗**`</summary>
-        private void RenderInline(string line)
-        {
-            int i = 0;
-            var buf = new StringBuilder();
-            bool sawBold = false;
-
-            while (i < line.Length)
-            {
-                if (i + 1 < line.Length && line[i] == '*' && line[i + 1] == '*')
-                {
-                    int end = line.IndexOf("**", i + 2, StringComparison.Ordinal);
-                    if (end > i)
-                    {
-                        if (buf.Length > 0)
-                        {
-                            AppendStyled(buf.ToString(), Color.Black, _rich.Font, false);
-                            buf.Length = 0;
-                        }
-                        var boldFont = new Font(_rich.Font, FontStyle.Bold);
-                        AppendStyled(line.Substring(i + 2, end - i - 2), Color.Black, boldFont, false);
-                        sawBold = true;
-                        i = end + 2;
-                        continue;
-                    }
-                }
-                buf.Append(line[i]);
-                i++;
-            }
-
-            if (buf.Length > 0)
-            {
-                AppendStyled(buf.ToString(), Color.Black, _rich.Font, false);
-            }
-
-            // 未闭合的 ** 给个提示，避免用户以为没生效
-            if (!sawBold && line.Contains("**"))
-            {
-                // 什么都没解析出来，但用户写了 **，说明可能没闭合
-                // 不做额外处理，原文已经显示出来了
-            }
-        }
-
-        private void AppendStyled(string text, Color color, Font font, bool underline)
-        {
-            int start = _rich.TextLength;
-            _rich.AppendText(text);
-            _rich.Select(start, text.Length);
-            _rich.SelectionColor = color;
-            _rich.SelectionFont = font;
-            _rich.SelectionLength = 0;
+            CardRenderer.Render(_rich, _text, _atAll, _isPost);
         }
 
         private void CopyToClipboard(string content, string what)

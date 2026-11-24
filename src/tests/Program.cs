@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -34,6 +34,7 @@ namespace LarkSender.Tests
             RunNotifierErrorTests();
             RunScheduleValidationTests();
             RunHistoryTests();
+            RunCardBuilderTests();
 
             Console.WriteLine(new string('=', 60));
             Console.WriteLine();
@@ -219,16 +220,17 @@ namespace LarkSender.Tests
             Ok(o3.ContainsKey("timestamp"), "有密钥时带 timestamp");
             Ok(o3.ContainsKey("sign"), "有密钥时带 sign");
 
-            // post 类型（群机器人 webhook 要求 content 里再包一层 post）
-            string p4 = n.BuildPayload("第一行\n第二行", false, null, MessageKind.Post);
+            // 卡片类型（interactive + lark_md）
+            string p4 = n.BuildPayload("# 标题\n正文", false, null, MessageKind.Card);
             var o4 = Json.ParseObject(p4);
-            Eq(Json.GetString(o4, "msg_type", ""), "post", "post 类型 msg_type 正确");
-            var content4 = Json.GetObject(o4, "content");
-            Ok(content4.ContainsKey("post"), "post 含 post 包裹层（webhook 格式要求）");
-            var post4 = Json.GetObject(content4, "post");
-            Ok(post4.ContainsKey("zh_cn"), "post 含 zh_cn");
-            var zh = Json.GetObject(post4, "zh_cn");
-            Eq(Json.GetList(zh, "content").Count, 2, "post 两行内容");
+            Eq(Json.GetString(o4, "msg_type", ""), "interactive", "Card 类型 msg_type 正确");
+            var card4 = Json.GetObject(o4, "card");
+            Ok(card4 != null, "Card 含 card 对象");
+            var header = Json.GetObject(card4, "header");
+            Ok(header != null, "Card 含标题栏（# 标题触发）");
+            var ht = Json.GetObject(header, "title");
+            Eq(Json.GetString(ht, "content", ""), "标题", "标题内容正确");
+            Ok(Json.GetList(card4, "elements").Count > 0, "Card 含元素");
 
             // 特殊字符不破坏 JSON
             string tricky = "引号\" 反斜杠\\ 换行\n 制表\t 中文";
@@ -360,6 +362,95 @@ namespace LarkSender.Tests
             // 每天任务对时间无限制
             Ok(ScheduleManager.ValidateRunAt(DateTime.Now.AddMinutes(-5), ScheduleKind.Daily) == null,
                 "每天任务不校验过去时间");
+        }
+
+        // ==================== 卡片构造 ====================
+
+        private static void RunCardBuilderTests()
+        {
+            Section("卡片构造 - 标题与颜色");
+
+            var r1 = CardBuilder.Parse("# 发布完成\n服务正常", false);
+            Eq(r1.Title, "发布完成", "# 提取为卡片标题");
+            Eq(r1.Color, CardBuilder.HeaderColor.Green, "标题含「完成」→ 绿色");
+
+            var r2 = CardBuilder.Parse("# 部署失败\n详情", false);
+            Eq(r2.Color, CardBuilder.HeaderColor.Red, "标题含「失败」→ 红色");
+
+            var r3 = CardBuilder.Parse("# 注意事项\n详情", false);
+            Eq(r3.Color, CardBuilder.HeaderColor.Orange, "标题含「注意」→ 橙色");
+
+            var r4 = CardBuilder.Parse("# 日常通知\n内容", false);
+            Eq(r4.Color, CardBuilder.HeaderColor.Blue, "无关键词 → 蓝色");
+
+            var r5 = CardBuilder.Parse("!绿 自定义标题\n内容", false);
+            Eq(r5.Title, "自定义标题", "!颜色 语法提取标题");
+            Eq(r5.Color, CardBuilder.HeaderColor.Green, "!绿 强制绿色");
+
+            Section("卡片构造 - 元素");
+
+            var r6 = CardBuilder.Parse("# 标题\n第一段\n\n第二段", false);
+            Ok(r6.Elements.Count >= 2, "空行分段落");
+
+            var r7 = CardBuilder.Parse("正文\n---\n页脚内容", false);
+            Ok(r7.Elements.Count >= 2, "--- 分隔正文与页脚");
+            var lastElem = r7.Elements[r7.Elements.Count - 1] as Dictionary<string, object>;
+            Eq(Json.GetString(lastElem, "tag", ""), "note", "--- 后内容进 note 页脚");
+
+            var r8 = CardBuilder.Parse("## 二级标题\n内容", false);
+            Ok(r8.Elements.Count >= 1, "## 生成元素");
+            var h2elem = r8.Elements[0] as Dictionary<string, object>;
+            var h2text = Json.GetObject(h2elem, "text");
+            Ok(Json.GetString(h2text, "content", "").Contains("**"), "## 转成加粗");
+
+            Section("卡片构造 - @所有人");
+
+            var r9 = CardBuilder.Parse("内容", true);
+            bool hasAt = false;
+            foreach (var e in r9.Elements)
+            {
+                var d = e as Dictionary<string, object>;
+                var t = Json.GetObject(d, "text");
+                if (t != null && Json.GetString(t, "content", "").Contains("<at id=all>")) hasAt = true;
+            }
+            Ok(hasAt, "atAll=true 时包含 <at id=all>");
+
+            var r10 = CardBuilder.Parse("内容", false);
+            bool hasAt2 = false;
+            foreach (var e in r10.Elements)
+            {
+                var d = e as Dictionary<string, object>;
+                var t = Json.GetObject(d, "text");
+                if (t != null && Json.GetString(t, "content", "").Contains("<at id=all>")) hasAt2 = true;
+            }
+            Ok(!hasAt2, "atAll=false 时不包含 <at>");
+
+            Section("卡片构造 - 边界");
+
+            var r11 = CardBuilder.Parse("", false);
+            Ok(r11.Elements.Count > 0, "空内容也有占位元素");
+            Eq(r11.Title, "", "空内容无标题");
+
+            var r12 = CardBuilder.Parse(null, false);
+            Ok(r12.Elements.Count > 0, "null 不抛异常");
+
+            var r13 = CardBuilder.Parse("# \n正文", false);
+            Eq(r13.Title, "", "空标题不写入");
+
+            Section("卡片构造 - 完整 JSON");
+
+            var cardObj = CardBuilder.BuildCard("# 测试\n**加粗** 内容", false);
+            Ok(cardObj.ContainsKey("config"), "卡片含 config");
+            Ok(cardObj.ContainsKey("header"), "卡片含 header");
+            Ok(cardObj.ContainsKey("elements"), "卡片含 elements");
+
+            string json = Json.Serialize(cardObj);
+            var parsed = Json.ParseObject(json);
+            Eq(Json.GetString(parsed, "header", null) == null ? "" : "has", "has", "序列化后可解析");
+
+            Eq(CardBuilder.ColorToTemplate(CardBuilder.HeaderColor.Green), "green", "绿色模板名");
+            Eq(CardBuilder.ColorToTemplate(CardBuilder.HeaderColor.Red), "red", "红色模板名");
+            Eq(CardBuilder.ColorToTemplate(CardBuilder.HeaderColor.Blue), "blue", "蓝色模板名");
         }
 
         private static DateTime NextWeekday(DayOfWeek target)

@@ -8,8 +8,13 @@ namespace LarkSender.Models
     {
         /// <summary>纯文本，支持 &lt;at user_id="all"&gt; 提及</summary>
         Text = 0,
-        /// <summary>富文本（post），支持标题、加粗、链接、列表</summary>
-        Post = 1,
+        /// <summary>
+        /// 富文本卡片（interactive + lark_md）。
+        /// 为什么不用 post：实测群机器人 webhook 的 post 不支持 style
+        /// （加粗/斜体/下划线），只能做纯文本 + 换行；
+        /// 而 interactive 卡片的 lark_md 真正支持 Markdown。
+        /// </summary>
+        Card = 1,
     }
 
     /// <summary>一个群机器人配置</summary>

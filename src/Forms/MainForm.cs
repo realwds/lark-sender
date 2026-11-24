@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -28,6 +28,8 @@ namespace LarkSender.Forms
         private Button _btnSyntaxTitle;
         private Button _btnSyntaxList;
         private Button _btnSyntaxBold;
+        private Button _btnSyntaxLink;
+        private Button _btnSyntaxHr;
         private RichTextBox _livePreview;
         private SplitContainer _editorSplit;
         private Label _lblStatus;
@@ -356,14 +358,14 @@ namespace LarkSender.Forms
 
             _chkPost = new CheckBox
             {
-                Text = "富文本格式",
+                Text = "卡片模式",
                 AutoSize = true,
                 Margin = new Padding(0, 4, 8, 0)
             };
             _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
             row4.Controls.Add(_chkPost);
 
-            // 富文本语法快捷按钮：勾了富文本才显示
+            // 卡片语法快捷按钮：勾了卡片模式才显示
             _btnSyntaxTitle = new Button
             {
                 Text = "+ 标题",
@@ -390,13 +392,35 @@ namespace LarkSender.Forms
             {
                 Text = "B 加粗",
                 Size = new Size(64, 24),
-                Margin = new Padding(0, 3, 14, 0),
+                Margin = new Padding(0, 3, 4, 0),
                 FlatStyle = FlatStyle.System,
                 Visible = false,
                 Font = new Font(Font, FontStyle.Bold)
             };
             _btnSyntaxBold.Click += (s, e) => InsertSyntax("**粗体**");
             row4.Controls.Add(_btnSyntaxBold);
+
+            _btnSyntaxLink = new Button
+            {
+                Text = "链接",
+                Size = new Size(56, 24),
+                Margin = new Padding(0, 3, 4, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnSyntaxLink.Click += (s, e) => InsertSyntax("[文字](https://)");
+            row4.Controls.Add(_btnSyntaxLink);
+
+            _btnSyntaxHr = new Button
+            {
+                Text = "分割线",
+                Size = new Size(64, 24),
+                Margin = new Padding(0, 3, 14, 0),
+                FlatStyle = FlatStyle.System,
+                Visible = false
+            };
+            _btnSyntaxHr.Click += (s, e) => InsertSyntax("\r\n---\r\n");
+            row4.Controls.Add(_btnSyntaxHr);
 
             _lblStatus = new Label
             {
@@ -763,7 +787,7 @@ namespace LarkSender.Forms
 
             var name = _cboGroup.SelectedItem as string;
             var g = name != null ? ConfigStore.FindGroup(_cfg, name) : null;
-            var kind = _chkPost.Checked ? MessageKind.Post : MessageKind.Text;
+            var kind = _chkPost.Checked ? MessageKind.Card : MessageKind.Text;
 
             string payload;
             try
@@ -783,17 +807,20 @@ namespace LarkSender.Forms
             }
         }
 
-        /// <summary>勾选/取消富文本时，控制语法按钮的显隐并提示语法</summary>
+        /// <summary>勾选/取消卡片模式时，控制语法按钮的显隐并提示语法</summary>
         private void UpdatePostHint()
         {
             bool on = _chkPost.Checked;
             _btnSyntaxTitle.Visible = on;
             _btnSyntaxList.Visible = on;
             _btnSyntaxBold.Visible = on;
+            _btnSyntaxLink.Visible = on;
+            _btnSyntaxHr.Visible = on;
 
             if (on)
             {
-                SetStatus("富文本：# 标题 · - 列表 · **文字** 加粗", Color.FromArgb(37, 99, 235));
+                SetStatus("卡片：# 标题 · - 列表 · **加粗** · [链接](url) · --- 分割线",
+                    Color.FromArgb(37, 99, 235));
             }
             else
             {
@@ -852,117 +879,12 @@ namespace LarkSender.Forms
 
         /// <summary>
         /// 实时渲染右侧预览。
-        /// 纯文本模式下直接原文显示；富文本模式下按 post 语义渲染。
+        /// 卡片模式下按飞书卡片的真实样式渲染（彩色标题栏、加粗、链接、分割线等）。
         /// </summary>
         private void RenderLivePreview()
         {
             if (_livePreview == null) return;
-
-            var text = _box.Text;
-            _livePreview.SuspendLayout();
-            try
-            {
-                _livePreview.Clear();
-
-                if (text.Length == 0)
-                {
-                    AppendLive("（在左侧输入内容，这里会显示出效果）",
-                        Color.FromArgb(156, 163, 175), false, false);
-                    return;
-                }
-
-                bool isPost = _chkPost.Checked;
-
-                if (_chkAll.Checked)
-                {
-                    AppendLive("所有人", Color.FromArgb(37, 99, 235), true, false);
-                    AppendLive("\n", Color.Black, false, false);
-                }
-
-                if (!isPost)
-                {
-                    // 纯文本：原样显示，只是把 @all 变蓝
-                    AppendLive(text, Color.Black, false, false);
-                    return;
-                }
-
-                var lines = text.Split('\n');
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    var line = lines[i].TrimEnd('\r');
-                    if (i > 0) AppendLive("\n", Color.Black, false, false);
-                    RenderLiveLine(line);
-                }
-            }
-            finally
-            {
-                _livePreview.ResumeLayout();
-            }
-        }
-
-        private void RenderLiveLine(string line)
-        {
-            if (line.Length == 0) return;
-
-            if (line.StartsWith("# "))
-            {
-                AppendLive(line.Substring(2).Trim(), Color.FromArgb(17, 24, 39), true, true);
-                return;
-            }
-
-            if (line.StartsWith("- ") || line.StartsWith("* "))
-            {
-                AppendLive("  •  ", Color.FromArgb(107, 114, 128), false, false);
-                RenderLiveInline(line.Substring(2));
-                return;
-            }
-
-            RenderLiveInline(line);
-        }
-
-        private void RenderLiveInline(string line)
-        {
-            int i = 0;
-            var buf = new StringBuilder();
-
-            while (i < line.Length)
-            {
-                if (i + 1 < line.Length && line[i] == '*' && line[i + 1] == '*')
-                {
-                    int end = line.IndexOf("**", i + 2, StringComparison.Ordinal);
-                    if (end > i)
-                    {
-                        if (buf.Length > 0)
-                        {
-                            AppendLive(buf.ToString(), Color.Black, false, false);
-                            buf.Length = 0;
-                        }
-                        AppendLive(line.Substring(i + 2, end - i - 2), Color.Black, true, false);
-                        i = end + 2;
-                        continue;
-                    }
-                }
-                buf.Append(line[i]);
-                i++;
-            }
-
-            if (buf.Length > 0)
-                AppendLive(buf.ToString(), Color.Black, false, false);
-        }
-
-        private void AppendLive(string text, Color color, bool bold, bool big)
-        {
-            if (string.IsNullOrEmpty(text)) return;
-
-            int start = _livePreview.TextLength;
-            _livePreview.AppendText(text);
-            _livePreview.Select(start, text.Length);
-            _livePreview.SelectionColor = color;
-
-            FontStyle style = bold ? FontStyle.Bold : FontStyle.Regular;
-            float size = _livePreview.Font.Size + (big ? 2.5f : 0f);
-            _livePreview.SelectionFont = new Font(_livePreview.Font.FontFamily, size, style);
-            _livePreview.SelectionLength = 0;
+            CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked, _chkPost.Checked);
         }
 
         private void DoSend()
@@ -988,7 +910,7 @@ namespace LarkSender.Forms
             var group = ConfigStore.FindGroup(_cfg, name);
             if (group == null) return;
 
-            var kind = _chkPost.Checked ? MessageKind.Post : MessageKind.Text;
+            var kind = _chkPost.Checked ? MessageKind.Card : MessageKind.Text;
             bool atAll = _chkAll.Checked;
 
             _busy = true;

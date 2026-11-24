@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Http;
@@ -231,10 +231,10 @@ namespace LarkSender.Core
         {
             var payload = new Dictionary<string, object>();
 
-            if (kind == MessageKind.Post)
+            if (kind == MessageKind.Card)
             {
-                payload["msg_type"] = "post";
-                payload["content"] = BuildPostContent(text, atAll);
+                payload["msg_type"] = "interactive";
+                payload["card"] = CardBuilder.BuildCard(text, atAll);
             }
             else
             {
@@ -254,96 +254,6 @@ namespace LarkSender.Core
             }
 
             return Json.Serialize(payload);
-        }
-
-        /// <summary>
-        /// 构造 post 富文本内容。
-        /// 每行一条：支持 `# 标题`（加粗大字）、`- 列表`、`**加粗**`。
-        ///
-        /// 关键：群机器人 webhook 的 post 格式比开放平台 API 多一层 post！
-        ///   webhook 正确格式（已实测）：
-        ///     { "msg_type":"post", "content": { "post": { "zh_cn": { "title":"", "content":[[...]] } } } }
-        ///   错误的（会报 code 10208 "'post' field required"）：
-        ///     { "msg_type":"post", "content": { "zh_cn": { ... } } }
-        /// </summary>
-        internal static Dictionary<string, object> BuildPostContent(string text, bool atAll)
-        {
-            var lines = new List<object>();
-            foreach (var raw in (text ?? "").Split('\n'))
-            {
-                var line = raw.TrimEnd('\r');
-                if (line.Length == 0)
-                {
-                    // 空行保留为占位，保证段落间距
-                    lines.Add(new List<object> { new Dictionary<string, object> {
-                        { "tag", "text" }, { "text", " " } } });
-                    continue;
-                }
-                lines.Add(ParseLine(line));
-            }
-
-            var body = new Dictionary<string, object> { { "content", lines } };
-            if (atAll) body["title"] = "所有人";
-            else body["title"] = "";
-
-            // webhook 要多包一层 post
-            return new Dictionary<string, object>
-            {
-                { "post", new Dictionary<string, object> { { "zh_cn", body } } }
-            };
-        }
-
-        /// <summary>把一行 Markdown 轻语法转成 post 的行结构</summary>
-        private static List<object> ParseLine(string line)
-        {
-            var segments = new List<object>();
-
-            // `# 标题` → 加粗
-            if (line.StartsWith("# "))
-            {
-                segments.Add(new Dictionary<string, object> {
-                    { "tag", "text" }, { "text", "【" + line.Substring(2).Trim() + "】" } });
-                return segments;
-            }
-
-            // `- 列表项` → 加圆点
-            string work = line;
-            if (work.StartsWith("- ") || work.StartsWith("* "))
-            {
-                work = "• " + work.Substring(2);
-            }
-
-            // 解析 **加粗**
-            int i = 0;
-            var buf = new StringBuilder();
-            while (i < work.Length)
-            {
-                if (i + 1 < work.Length && work[i] == '*' && work[i + 1] == '*')
-                {
-                    int end = work.IndexOf("**", i + 2, StringComparison.Ordinal);
-                    if (end > i)
-                    {
-                        if (buf.Length > 0)
-                        {
-                            segments.Add(new Dictionary<string, object> {
-                                { "tag", "text" }, { "text", buf.ToString() } });
-                            buf.Length = 0;
-                        }
-                        segments.Add(new Dictionary<string, object> {
-                            { "tag", "text" }, { "text", work.Substring(i + 2, end - i - 2) }, { "style", new List<object> { "bold" } } });
-                        i = end + 2;
-                        continue;
-                    }
-                }
-                buf.Append(work[i]);
-                i++;
-            }
-            if (buf.Length > 0)
-            {
-                segments.Add(new Dictionary<string, object> {
-                    { "tag", "text" }, { "text", buf.ToString() } });
-            }
-            return segments;
         }
 
         /// <summary>
