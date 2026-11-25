@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using System.Windows.Forms;
 using LarkSender.Core;
 using LarkSender.Models;
+using System.Runtime.InteropServices;
 
 namespace LarkSender.Forms
 {
@@ -23,9 +24,6 @@ namespace LarkSender.Forms
         private ComboBox _cboTemplate;
         private Label _lblHook;
         private TextBox _box;
-        private CheckBox _chkAll;
-        private CheckBox _chkPost;
-        private ComboBox _cboAtAllMode;
         private TextBox _txtCardTitle;
         private ComboBox _cboColor;
         private TableLayoutPanel _titleRow;
@@ -50,11 +48,113 @@ namespace LarkSender.Forms
         private TabControl _tabs;
 
         private bool _busy;
+        private ToolTip _tips;
+        private GroupManagerForm _groupMgr;
+        private TemplateManagerForm _tplMgr;
+        private EditScrollHook _boxScrollHook;
+        /// <summary>启动时从配置读到的分栏比例（BuildSendTab 早于 LoadConfigToUi 执行）</summary>
+        private double _cfgSplitRatio = -1;
+
+        // ==================== Win32 辅助（占位符 / 滚动同步） ====================
+
+        private const int WM_VSCROLL = 0x114;
+        private const int WM_MOUSEWHEEL = 0x20A;
+        private const int EM_GETFIRSTVISIBLELINE = 0x15;
+        private const int EM_SETCUEBANNER = 0x1501;
+        private const int EM_GETSCROLLPOS = 0x4DD;
+        private const int EM_SETSCROLLPOS = 0x4DE;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref Point lParam);
+
+        /// <summary>
+        /// 系统级占位符（EM_SETCUEBANNER）。比手搓的“显示/清空 hint 文本”可靠：
+        /// 占位文字永远不算真实内容，不会串进预览或被发送。
+        /// </summary>
+        private static void SetCueBanner(TextBox tb, string hint)
+        {
+            if (tb == null) return;
+            SendMessage(tb.Handle, EM_SETCUEBANNER, (IntPtr)1, hint ?? "");
+        }
+
+        /// <summary>让预览滚动位置跟随左侧编辑框（按可见比例映射）</summary>
+        private void SyncPreviewScrollFromBox()
+        {
+            if (_livePreview == null || _box == null || _livePreview.IsDisposed) return;
+
+            try
+            {
+                int firstLine = (int)SendMessage(_box.Handle, EM_GETFIRSTVISIBLELINE, IntPtr.Zero, IntPtr.Zero);
+                int totalLines = _box.GetLineFromCharIndex(_box.TextLength) + 1;
+                int lineH = Math.Max(1, _box.Font.Height);
+                int visibleLines = Math.Max(1, _box.ClientSize.Height / lineH);
+                int maxLine = Math.Max(0, totalLines - visibleLines);
+
+                var last = _livePreview.GetPositionFromCharIndex(Math.Max(0, _livePreview.TextLength - 1));
+                int contentH = (last.IsEmpty ? 0 : last.Y) + _livePreview.Font.Height;
+                int maxScroll = Math.Max(0, contentH - _livePreview.ClientSize.Height);
+
+                int y = maxLine == 0 ? 0 : (int)((double)firstLine / maxLine * maxScroll);
+                var pt = new Point(0, y);
+                SendMessage(_livePreview.Handle, EM_SETSCROLLPOS, IntPtr.Zero, ref pt);
+            }
+            catch
+            {
+                // 句柄未就绪等极端情况忽略
+            }
+        }
+
+        /// <summary>监听编辑框滚动（TextBox 没有 VScroll 事件），滚则带预览一起走</summary>
+        private class EditScrollHook : NativeWindow
+        {
+            private readonly Action _onScroll;
+
+            public EditScrollHook(Control c, Action onScroll)
+            {
+                _onScroll = onScroll;
+                AssignHandle(c.Handle);
+            }
+
+            protected override void WndProc(ref Message m)
+            {
+                base.WndProc(ref m);
+                if (m.Msg == WM_VSCROLL || m.Msg == WM_MOUSEWHEEL)
+                {
+                    try { _onScroll(); } catch { }
+                }
+            }
+        }
 
         public MainForm()
         {
+            // 先加载配置：构建 UI 时要用到分栏比例和窗口位置
+            _cfg = LoadConfigSafe();
+            if (_cfg.EditorSplitPercent >= 10 && _cfg.EditorSplitPercent <= 90)
+                _cfgSplitRatio = _cfg.EditorSplitPercent / 100.0;
+
             InitUi();
+            RestoreWindowState();
             LoadConfigToUi();
+        }
+
+        /// <summary>读取配置，失败时提示并回退到空配置（不中断启动）</summary>
+        private AppConfig LoadConfigSafe()
+        {
+            try
+            {
+                return _store.Load();
+            }
+            catch (ConfigException ex)
+            {
+                MessageBox.Show(ex.Message, "配置读取失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return new AppConfig();
+            }
         }
 
         /// <summary>
@@ -108,6 +208,23 @@ namespace LarkSender.Forms
                 try { h(); } catch { }
             }
             _shownHandlers.Clear();
+
+            // 打开即进入输入状态，少一次点击
+            if (_tabs != null && _tabs.SelectedIndex == 0 && _box != null) _box.Focus();
+        }
+
+        /// <summary>Ctrl+Enter 在发消息页任何位置都能发送，不必先点回内容框</summary>
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == (Keys.Control | Keys.Enter))
+            {
+                if (_tabs != null && _tabs.SelectedIndex == 0 && !_busy)
+                {
+                    DoSend();
+                    return true;
+                }
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
         }
 
         /// <summary>切换到指定页签（0=发消息 1=定时任务 2=历史记录），供启动参数使用</summary>
@@ -128,31 +245,83 @@ namespace LarkSender.Forms
             StartPosition = FormStartPosition.CenterScreen;
             Theme.ApplyForm(this);
             AppIcon.Apply(this);
+            KeyPreview = true;
+
+            _tips = new ToolTip();
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             _tabs = tabs;
+            // 前三个页签顺序固定（CLI /tab 参数按索引跳转），管理类页签排后面
             var tpSend = new TabPage("发消息") { Padding = new Padding(10) };
             var tpSched = new TabPage("定时任务") { Padding = new Padding(10) };
             var tpHistory = new TabPage("历史记录") { Padding = new Padding(10) };
-            tabs.TabPages.AddRange(new[] { tpSend, tpSched, tpHistory });
+            var tpGroups = new TabPage("群管理") { Padding = new Padding(4) };
+            var tpTemplates = new TabPage("常用语") { Padding = new Padding(4) };
+            tabs.TabPages.AddRange(new[] { tpSend, tpSched, tpHistory, tpGroups, tpTemplates });
             Controls.Add(tabs);
 
             BuildSendTab(tpSend);
             BuildScheduleTab(tpSched);
             BuildHistoryTab(tpHistory);
+            BuildGroupTab(tpGroups);
+            BuildTemplateTab(tpTemplates);
         }
 
-private void BuildSendTab(TabPage page)
+        /// <summary>把一个 Form 作为子控件嵌入页签（去掉边框，占满页签）</summary>
+        private static void EmbedInTab(TabPage page, Form form)
         {
-            page.BackColor = Theme.Bg;
-            page.Padding = new Padding(16, 12, 16, 12);
+            form.TopLevel = false;
+            form.FormBorderStyle = FormBorderStyle.None;
+            form.Dock = DockStyle.Fill;
+            form.StartPosition = FormStartPosition.Manual;
+            page.Controls.Add(form);
+            form.Show();
+        }
+
+        /// <summary>群管理页签：直接操作配置对象，变更即时落盘并刷新发消息页</summary>
+        private void BuildGroupTab(TabPage page)
+        {
+            _groupMgr = new GroupManagerForm(_cfg);
+            _groupMgr.OnDataChanged = () =>
+            {
+                try { _store.Save(_cfg); } catch (Exception ex)
+                {
+                    MessageBox.Show("保存配置失败：" + ex.Message, "错误",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                RefreshGroupCombo();
+                SetStatus("群配置已更新", Color.ForestGreen);
+            };
+            EmbedInTab(page, _groupMgr);
+        }
+
+        /// <summary>常用语页签：增删改排序即时落盘并刷新下拉</summary>
+        private void BuildTemplateTab(TabPage page)
+        {
+            _tplMgr = new TemplateManagerForm(_cfg.Templates);
+            _tplMgr.OnDataChanged = items =>
+            {
+                _cfg.Templates = items;
+                try { _store.Save(_cfg); } catch (Exception ex)
+                {
+                    MessageBox.Show("保存配置失败：" + ex.Message, "错误",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+                RefreshTemplateCombo();
+                SetStatus("常用语已更新（" + items.Count + " 条）", Color.ForestGreen);
+            };
+            EmbedInTab(page, _tplMgr);
+        }
+
+        private void BuildSendTab(TabPage page)
+        {
+            page.Padding = new Padding(10);
 
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 5,
-                BackColor = Theme.Bg
+                RowCount = 5
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));      // 目标群
@@ -169,8 +338,7 @@ private void BuildSendTab(TabPage page)
                 RowCount = 1,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 10),
-                BackColor = Theme.Bg
+                Margin = new Padding(0, 0, 0, 8)
             };
             rowGroup.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             rowGroup.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 240f));
@@ -181,7 +349,7 @@ private void BuildSendTab(TabPage page)
                 Text = "发送到",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextSecondary,
+                ForeColor = Color.DimGray,
                 Margin = new Padding(0, 6, 10, 0)
             }, 0, 0);
 
@@ -189,13 +357,11 @@ private void BuildSendTab(TabPage page)
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Dock = DockStyle.Fill,
-                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
             _cboGroup.SelectedIndexChanged += (s, e) => UpdateHookLabel();
             rowGroup.Controls.Add(_cboGroup, 1, 0);
 
-            // webhook 状态 + 管理入口合在一起，不再单独占按钮位
             var groupTail = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -210,20 +376,27 @@ private void BuildSendTab(TabPage page)
             {
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextMuted,
-                Font = Theme.FontSmall,
+                ForeColor = Color.DimGray,
                 Text = "",
-                Margin = new Padding(0, 8, 8, 0)
+                Cursor = Cursors.Hand,
+                Margin = new Padding(0, 6, 8, 0)
             };
+            _lblHook.Click += (s, e) => CopyCurrentWebhook();
             groupTail.Controls.Add(_lblHook);
+            _tips.SetToolTip(_lblHook, "点击复制完整 webhook");
 
-            var lnkManageGroup = MakeLinkLabel("管理群");
-            lnkManageGroup.Click += (s, e) => OpenGroupManager();
-            groupTail.Controls.Add(lnkManageGroup);
+            var btnManageGroup = new Button
+            {
+                Text = "管理群…",
+                Size = new Size(78, 25),
+                Margin = new Padding(0, 1, 0, 0)
+            };
+            btnManageGroup.Click += (s, e) => OpenGroupManager();
+            groupTail.Controls.Add(btnManageGroup);
 
             rowGroup.Controls.Add(groupTail, 2, 0);
 
-            // ==================== 卡片标题（仅卡片模式） ====================
+            // ==================== 卡片标题（填了标题或用了格式即按卡片发送，无需开关） ====================
             var rowTitle = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -231,9 +404,7 @@ private void BuildSendTab(TabPage page)
                 RowCount = 1,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 10),
-                Visible = false,
-                BackColor = Theme.Bg
+                Margin = new Padding(0, 0, 0, 8)
             };
             rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             rowTitle.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -246,7 +417,7 @@ private void BuildSendTab(TabPage page)
                 Text = "标题",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextSecondary,
+                ForeColor = Color.DimGray,
                 Margin = new Padding(0, 6, 10, 0)
             }, 0, 0);
 
@@ -256,8 +427,17 @@ private void BuildSendTab(TabPage page)
                 BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 2, 10, 0)
             };
-            SetPlaceholder(_txtCardTitle, "选填，例如：部署完成");
+            SetCueBanner(_txtCardTitle, "选填，例如：部署完成");
             _txtCardTitle.TextChanged += (s, e) => RenderLivePreview();
+            // 标题填完回车直接跳到正文
+            _txtCardTitle.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter && !e.Control)
+                {
+                    e.SuppressKeyPress = true;
+                    _box.Focus();
+                }
+            };
             rowTitle.Controls.Add(_txtCardTitle, 1, 0);
 
             rowTitle.Controls.Add(new Label
@@ -265,7 +445,7 @@ private void BuildSendTab(TabPage page)
                 Text = "颜色",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextSecondary,
+                ForeColor = Color.DimGray,
                 Margin = new Padding(0, 6, 8, 0)
             }, 2, 0);
 
@@ -273,7 +453,6 @@ private void BuildSendTab(TabPage page)
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Dock = DockStyle.Fill,
-                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 2, 10, 0)
             };
             _cboColor.Items.AddRange(new object[] { "自动", "蓝", "绿", "红", "橙", "灰", "紫", "青" });
@@ -283,37 +462,23 @@ private void BuildSendTab(TabPage page)
 
             _titleRow = rowTitle;
 
-            // ==================== 编辑区（左写右看） ====================
+            // ==================== 编辑区（左写右看，与其他页一致的分组框样式） ====================
             var editorSplit = new SplitContainer
             {
                 Dock = DockStyle.Fill,
                 Orientation = Orientation.Vertical,
-                SplitterWidth = 12,
-                Margin = new Padding(0, 0, 0, 10),
+                SplitterWidth = 6,
+                Margin = new Padding(0, 0, 0, 8),
                 Panel1MinSize = 100,
-                Panel2MinSize = 100,
-                BorderStyle = BorderStyle.None,
-                BackColor = Theme.Bg
+                Panel2MinSize = 100
             };
 
-            // 左侧：Markdown 编辑
-            var leftCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(0) };
-
-            var leftHeader = new Panel
+            var leftBox = new GroupBox
             {
-                Dock = DockStyle.Top,
-                Height = 30,
-                BackColor = Theme.Bg,
-                Padding = new Padding(12, 0, 8, 0)
-            };
-            leftHeader.Controls.Add(new Label
-            {
-                Text = "内容",
+                Text = "内容（Markdown）",
                 Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Theme.TextSecondary,
-                Font = Theme.FontSmall
-            });
+                Padding = new Padding(8)
+            };
 
             _box = new TextBox
             {
@@ -321,53 +486,26 @@ private void BuildSendTab(TabPage page)
                 ScrollBars = ScrollBars.Vertical,
                 AcceptsReturn = true,
                 Dock = DockStyle.Fill,
-                BorderStyle = BorderStyle.None,
-                Font = Theme.FontBody,
-                BackColor = Theme.Surface,
-                ForeColor = Theme.TextPrimary
-            };            _box.KeyDown += (s, e) =>
-            {
-                if (e.Control && e.KeyCode == Keys.Enter)
-                {
-                    e.SuppressKeyPress = true;
-                    DoSend();
-                }
+                BorderStyle = BorderStyle.FixedSingle
             };
+            // Ctrl+Enter 由窗体级 ProcessCmdKey 统一处理（焦点在任何控件上都生效）
             _box.TextChanged += (s, e) => { if (!_syncingPreview) RenderLivePreview(); };
+            _boxScrollHook = new EditScrollHook(_box, SyncPreviewScrollFromBox);
+            leftBox.Controls.Add(_box);
+            editorSplit.Panel1.Controls.Add(leftBox);
 
-            var leftBody = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 6, 10) };
-            leftBody.Controls.Add(_box);
-
-            leftCard.Controls.Add(leftBody);
-            leftCard.Controls.Add(leftHeader);
-            editorSplit.Panel1.Controls.Add(leftCard);
-
-            // 右侧：可编辑预览
-            var rightCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(0) };
-
-            var rightHeader = new Panel
-            {
-                Dock = DockStyle.Top,
-                Height = 30,
-                BackColor = Theme.Bg,
-                Padding = new Padding(12, 0, 8, 0)
-            };
-            rightHeader.Controls.Add(new Label
+            var rightBox = new GroupBox
             {
                 Text = "预览（可直接编辑）",
                 Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Theme.TextSecondary,
-                Font = Theme.FontSmall
-            });
+                Padding = new Padding(8)
+            };
 
             _livePreview = new RichTextBox
             {
                 Dock = DockStyle.Fill,
                 ReadOnly = false,
-                BorderStyle = BorderStyle.None,
-                BackColor = Theme.Surface,
-                ForeColor = Theme.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = new Font("Microsoft YaHei UI", 10f),
                 DetectUrls = false,
                 ScrollBars = RichTextBoxScrollBars.Vertical
@@ -377,19 +515,14 @@ private void BuildSendTab(TabPage page)
                 if (_syncingPreview) return;
                 SyncPreviewToSource();
             };
-
-            var rightBody = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12, 0, 10, 10) };
-            rightBody.Controls.Add(_livePreview);
-
-            rightCard.Controls.Add(rightBody);
-            rightCard.Controls.Add(rightHeader);
-            editorSplit.Panel2.Controls.Add(rightCard);
+            rightBox.Controls.Add(_livePreview);
+            editorSplit.Panel2.Controls.Add(rightBox);
 
             _editorSplit = editorSplit;
-            editorSplit.Paint += (s, e) => SplitPaint.PaintOver(editorSplit, e);
-            SplitPaint.Attach(editorSplit);
-            editorSplit.SizeChanged += (s, e) => SafeSetSplitter(editorSplit, 0.5);
-            AddShownHandler(() => SafeSetSplitter(editorSplit, 0.5));
+            // 只在首次显示时应用记忆比例；窗口 resize 不再强制拉回 1:1，
+            // 否则用户拖过的分栏位置会被覆盖
+            double splitRatio = _cfgSplitRatio >= 0.10 && _cfgSplitRatio <= 0.90 ? _cfgSplitRatio : 0.5;
+            AddShownHandler(() => SafeSetSplitter(editorSplit, splitRatio));
 
             // ==================== 工具条 ====================
             var rowTools = new TableLayoutPanel
@@ -399,8 +532,7 @@ private void BuildSendTab(TabPage page)
                 RowCount = 1,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0, 0, 0, 10),
-                BackColor = Theme.Bg
+                Margin = new Padding(0, 0, 0, 8)
             };
             rowTools.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             rowTools.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -420,51 +552,20 @@ private void BuildSendTab(TabPage page)
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 170,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 3, 6, 0)
+                Margin = new Padding(0, 2, 6, 0)
             };
             _cboTemplate.SelectedIndexChanged += (s, e) => ApplyTemplate();
             toolsLeft.Controls.Add(_cboTemplate);
 
-            var lnkSaveTpl = MakeLinkLabel("存为常用语");
-            lnkSaveTpl.Margin = new Padding(0, 8, 16, 0);
-            lnkSaveTpl.Click += (s, e) => SaveAsTemplate();
-            toolsLeft.Controls.Add(lnkSaveTpl);
-
-            _chkPost = new CheckBox
+            var btnSaveTpl = new Button
             {
-                Text = "卡片消息",
-                AutoSize = true,
-                ForeColor = Theme.TextSecondary,
-                Margin = new Padding(0, 6, 16, 0)
+                Text = "存为常用语",
+                Size = new Size(90, 25),
+                Margin = new Padding(0, 1, 12, 0)
             };
-            _chkPost.CheckedChanged += (s, e) => UpdatePostHint();
-            toolsLeft.Controls.Add(_chkPost);
+            btnSaveTpl.Click += (s, e) => SaveAsTemplate();
+            toolsLeft.Controls.Add(btnSaveTpl);
 
-            _chkAll = new CheckBox
-            {
-                Text = "所有人",
-                AutoSize = true,
-                Checked = true,
-                ForeColor = Theme.TextSecondary,
-                Margin = new Padding(0, 6, 6, 0)
-            };
-            _chkAll.CheckedChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
-            toolsLeft.Controls.Add(_chkAll);
-
-            _cboAtAllMode = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Width = 72,
-                FlatStyle = FlatStyle.Flat,
-                Margin = new Padding(0, 4, 16, 0),
-                Visible = false
-            };
-            _cboAtAllMode.Items.AddRange(new object[] { "换行", "同行" });
-            _cboAtAllMode.SelectedIndexChanged += (s, e) => { RenderLivePreview(); SaveAtAllInline(); };
-            toolsLeft.Controls.Add(_cboAtAllMode);
-
-            // 格式 / 插入 用扁平小按钮
             _btnFormatMenu = MakeToolButton("格式", 68);
             _btnFormatMenu.Click += (s, e) => ShowFormatMenu();
             toolsLeft.Controls.Add(_btnFormatMenu);
@@ -484,8 +585,7 @@ private void BuildSendTab(TabPage page)
                 AutoSize = false,
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleRight,
-                ForeColor = Theme.TextMuted,
-                Font = Theme.FontSmall,
+                ForeColor = Color.DimGray,
                 Text = "",
                 Margin = new Padding(8, 0, 0, 0)
             };
@@ -499,8 +599,7 @@ private void BuildSendTab(TabPage page)
                 RowCount = 1,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0),
-                BackColor = Theme.Bg
+                Margin = new Padding(0)
             };
             rowAction.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
             rowAction.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -510,20 +609,16 @@ private void BuildSendTab(TabPage page)
                 Text = "Ctrl + Enter 快速发送",
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextMuted,
-                Font = Theme.FontSmall,
-                Margin = new Padding(0, 10, 0, 0)
+                ForeColor = Color.DimGray,
+                Margin = new Padding(0, 8, 0, 0)
             };
             rowAction.Controls.Add(hint, 0, 0);
 
             _btnSend = new Button
             {
                 Text = "发送",
-                Size = new Size(120, 38),
-                Margin = new Padding(0),
-                Font = new Font(Theme.FontBody.FontFamily, 10f, FontStyle.Bold)
+                Size = new Size(110, 32)
             };
-            Theme.StylePrimary(_btnSend);
             _btnSend.Click += (s, e) => DoSend();
             rowAction.Controls.Add(_btnSend, 1, 0);
 
@@ -535,31 +630,14 @@ private void BuildSendTab(TabPage page)
             page.Controls.Add(root);
         }
 
-        /// <summary>创建一个小号扁平工具按钮</summary>
+        /// <summary>创建工具条小按钮（与其他页的系统按钮同一风格）</summary>
         private Button MakeToolButton(string text, int width)
         {
-            var b = new Button
+            return new Button
             {
                 Text = text,
-                Size = new Size(width, 28),
-                Margin = new Padding(0, 3, 6, 0)
-            };
-            Theme.StyleSecondary(b);
-            return b;
-        }
-
-        /// <summary>创建链接样式标签（比按钮轻）</summary>
-        private LinkLabel MakeLinkLabel(string text)
-        {
-            return new LinkLabel
-            {
-                Text = text,
-                AutoSize = true,
-                LinkColor = Theme.Primary,
-                ActiveLinkColor = Theme.PrimaryHover,
-                Font = Theme.FontSmall,
-                LinkBehavior = LinkBehavior.HoverUnderline,
-                Margin = new Padding(0, 8, 0, 0)
+                Size = new Size(width, 25),
+                Margin = new Padding(0, 1, 6, 0)
             };
         }
 
@@ -691,10 +769,8 @@ private void BuildSendTab(TabPage page)
 
             _historySplit = split;
             split.BorderStyle = BorderStyle.None;
-            split.SplitterWidth = 10;
-            split.Paint += (s, e) => SplitPaint.PaintOver(split, e);
-            SplitPaint.Attach(split);
-            split.SizeChanged += (s, e) => SafeSetSplitter(split, 0.48);
+            split.SplitterWidth = 6;
+            // 只在首次显示时定位，resize 不重置（用户拖过的位置要保留）
             AddShownHandler(() => SafeSetSplitter(split, 0.48));
 
             var btnRow = new FlowLayoutPanel
@@ -744,27 +820,100 @@ private void BuildSendTab(TabPage page)
 
         private void LoadConfigToUi()
         {
-            try
-            {
-                _cfg = _store.Load();
-            }
-            catch (ConfigException ex)
-            {
-                MessageBox.Show(ex.Message, "配置读取失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                _cfg = new AppConfig();
-            }
-
             RefreshGroupCombo();
             RefreshTemplateCombo();
             RefreshScheduleList();
             RefreshHistory();
-            if (_cboAtAllMode != null)
-            {
-                _cboAtAllMode.SelectedIndex = (_cfg.AtAllInline ? 1 : 0);
-            }
-            UpdateAtAllModeVisibility();
+            RestoreDraft();
             RenderLivePreview();
-            UpdatePostHint();
+        }
+
+        /// <summary>恢复上次关闭时的窗口位置/尺寸（不在任何屏幕上时忽略）</summary>
+        private void RestoreWindowState()
+        {
+            if (_cfg.WindowWidth < MinimumSize.Width || _cfg.WindowHeight < MinimumSize.Height) return;
+            if (_cfg.WindowLeft < -10000 || _cfg.WindowTop < -10000) return;
+
+            var topLeft = new Rectangle(_cfg.WindowLeft, _cfg.WindowTop, 200, 200);
+            bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(topLeft));
+            if (!onScreen) return;
+
+            StartPosition = FormStartPosition.Manual;
+            Bounds = new Rectangle(_cfg.WindowLeft, _cfg.WindowTop, _cfg.WindowWidth, _cfg.WindowHeight);
+        }
+
+        /// <summary>恢复上次未发送的草稿，避免误关窗口丢内容（卡片与否由内容自动判断）</summary>
+        private void RestoreDraft()
+        {
+            var d = _cfg.Draft;
+            if (d == null || d.IsEmpty) return;
+
+            _box.Text = d.Body ?? "";
+            _txtCardTitle.Text = d.Title ?? "";
+            SelectColorByName(d.Color);
+            SetStatus("已恢复上次未发送的草稿", Theme.TextSecondary);
+        }
+
+        /// <summary>按颜色名选中下拉项（找不到则回到「自动」）</summary>
+        private void SelectColorByName(string colorName)
+        {
+            if (_cboColor == null || string.IsNullOrEmpty(colorName)) return;
+            for (int k = 0; k < _cboColor.Items.Count; k++)
+            {
+                if (string.Equals(_cboColor.Items[k].ToString(), colorName, StringComparison.Ordinal))
+                {
+                    _cboColor.SelectedIndex = k;
+                    return;
+                }
+            }
+            _cboColor.SelectedIndex = 0;
+        }
+
+        /// <summary>关闭时记忆窗口状态、分栏比例和未发送草稿</summary>
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            base.OnFormClosing(e);
+            if (_cfg == null) return;
+
+            try
+            {
+                if (WindowState == FormWindowState.Normal)
+                {
+                    _cfg.WindowLeft = Left;
+                    _cfg.WindowTop = Top;
+                    _cfg.WindowWidth = Width;
+                    _cfg.WindowHeight = Height;
+                }
+
+                if (_editorSplit != null && _editorSplit.Width > 20)
+                {
+                    _cfg.EditorSplitPercent = (int)Math.Round(
+                        100.0 * _editorSplit.SplitterDistance / _editorSplit.Width);
+                }
+
+                _cfg.Draft = MakeDraft();
+                _store.Save(_cfg);
+            }
+            catch
+            {
+                // 记忆失败不影响关闭
+            }
+        }
+
+        /// <summary>当前编辑区快照（空内容返回 null，不写草稿）</summary>
+        private DraftConfig MakeDraft()
+        {
+            string body = _box != null ? _box.Text : "";
+            string title = _txtCardTitle != null ? _txtCardTitle.Text.Trim() : "";
+            if (body.Trim().Length == 0 && title.Length == 0) return null;
+
+            return new DraftConfig
+            {
+                Body = body,
+                Title = title,
+                Color = _cboColor != null && _cboColor.SelectedIndex > 0
+                    ? _cboColor.SelectedItem.ToString() : ""
+            };
         }
 
         private void RefreshGroupCombo()
@@ -803,7 +952,6 @@ private void BuildSendTab(TabPage page)
                 _lblHook.Text = "⚠ 该群未配置 webhook";
                 _lblHook.ForeColor = Color.Firebrick;
             }
-            _chkAll.Checked = g.AtAll;
         }
 
         private void RefreshTemplateCombo()
@@ -1004,34 +1152,14 @@ private void BuildSendTab(TabPage page)
             {
                 var tpl = _cfg.Templates[tplIdx];
 
-                // 还原当时保存的形态：正文 + 卡片标题 + 颜色 + 是否卡片
+                // 还原当时保存的形态：正文 + 卡片标题 + 颜色（是否卡片由内容自动判断）
                 _box.Text = tpl.Body ?? "";
                 _box.SelectionStart = _box.TextLength;
 
-                if (_chkPost.Checked != tpl.IsCard)
-                {
-                    _chkPost.Checked = tpl.IsCard;
-                    UpdatePostHint();
-                }
+                _txtCardTitle.Text = tpl.Title ?? "";
 
-                SetRealText(_txtCardTitle, tpl.Title);
+                SelectColorByName(tpl.Color);
 
-                if (_cboColor != null)
-                {
-                    int ci = 0;
-                    if (!string.IsNullOrEmpty(tpl.Color))
-                    {
-                        var items = _cboColor.Items;
-                        for (int k = 0; k < items.Count; k++)
-                        {
-                            if (string.Equals(items[k].ToString(), tpl.Color, StringComparison.Ordinal))
-                            { ci = k; break; }
-                        }
-                    }
-                    _cboColor.SelectedIndex = ci;
-                }
-
-                _chkAll.Checked = tpl.AtAll;
                 RenderLivePreview();
                 SetStatus("已填入常用语：" + tpl.Name, Theme.Primary);
             }
@@ -1041,10 +1169,10 @@ private void BuildSendTab(TabPage page)
         private void SaveAsTemplate()
         {
             var body = _box.Text.Trim();
-            string title = RealText(_txtCardTitle).Trim();
+            string title = _txtCardTitle.Text.Trim();
 
-            // 卡片模式允许只有标题没正文
-            if (body.Length == 0 && !(_chkPost.Checked && title.Length > 0))
+            // 有标题没正文也算有内容（卡片形态）
+            if (body.Length == 0 && title.Length == 0)
             {
                 MessageBox.Show("内容和标题都是空的，没东西可存。", "无法保存",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1055,14 +1183,14 @@ private void BuildSendTab(TabPage page)
             {
                 Body = body,
                 Title = title,
-                IsCard = _chkPost.Checked,
-                AtAll = _chkAll.Checked,
-                Color = _chkPost.Checked && _cboColor != null && _cboColor.SelectedIndex > 0
+                IsCard = Notifier.PickKind(body, title) == MessageKind.Card,
+                AtAll = (body + " " + title).Contains(Notifier.AtAllToken),
+                Color = _cboColor != null && _cboColor.SelectedIndex > 0
                         ? _cboColor.SelectedItem.ToString() : ""
             };
             tpl.RefreshName();
 
-            // 重复检查：正文+标题+卡片状态 完全一致才算重复
+            // 重复检查：正文+标题 完全一致才算重复
             foreach (var t in _cfg.Templates)
             {
                 if (t.Body == tpl.Body && t.Title == tpl.Title && t.IsCard == tpl.IsCard)
@@ -1090,10 +1218,10 @@ private void BuildSendTab(TabPage page)
         private void ShowPreview()
         {
             var text = _box.Text;
-            bool isCard = _chkPost.Checked;
-            string cardTitle = _txtCardTitle != null ? RealText(_txtCardTitle).Trim() : "";
+            string cardTitle = _txtCardTitle != null ? _txtCardTitle.Text.Trim() : "";
+            var kind = Notifier.PickKind(text, cardTitle);
 
-            if (string.IsNullOrWhiteSpace(text) && !(isCard && cardTitle.Length > 0))
+            if (string.IsNullOrWhiteSpace(text) && !(kind == MessageKind.Card && cardTitle.Length > 0))
             {
                 MessageBox.Show("请先输入内容。", "内容为空", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
@@ -1101,7 +1229,6 @@ private void BuildSendTab(TabPage page)
 
             var name = _cboGroup.SelectedItem as string;
             var g = name != null ? ConfigStore.FindGroup(_cfg, name) : null;
-            var kind = isCard ? MessageKind.Card : MessageKind.Text;
             bool autoColor;
             var cardColor = CurrentColor(out autoColor);
 
@@ -1109,8 +1236,8 @@ private void BuildSendTab(TabPage page)
             try
             {
                 var notifier = new Notifier();
-                payload = notifier.BuildPayload(text, _chkAll.Checked,
-                    g != null ? g.Secret : null, kind, cardTitle, cardColor, autoColor, AtAllInline);
+                payload = notifier.BuildPayload(text, false,
+                    g != null ? g.Secret : null, kind, cardTitle, cardColor, autoColor, false);
             }
             catch (Exception ex)
             {
@@ -1118,31 +1245,10 @@ private void BuildSendTab(TabPage page)
                 return;
             }
 
-            using (var dlg = new PreviewForm(text, _chkAll.Checked, isCard, payload, cardTitle, cardColor, autoColor))
+            using (var dlg = new PreviewForm(text, false, kind == MessageKind.Card, payload, cardTitle, cardColor, autoColor))
             {
                 dlg.ShowDialog(this);
             }
-        }
-
-        /// <summary>勾选/取消卡片模式时，显示格式菜单入口</summary>
-        private void UpdatePostHint()
-        {
-            bool on = _chkPost.Checked;
-
-            _titleRow.Visible = on;
-            if (_btnFormatMenu != null) _btnFormatMenu.Visible = on;
-            if (_btnInsertMenu != null) _btnInsertMenu.Visible = on;
-
-            if (on)
-            {
-                SetStatus("选中文字后点「格式」改样式", Color.FromArgb(37, 99, 235));
-            }
-            else
-            {
-                SetStatus("Ctrl+Enter 发送", Color.FromArgb(107, 114, 128));
-            }
-
-            RenderLivePreview();
         }
 
         /// <summary>取当前选的颜色（自动 = 根据标题猜）</summary>
@@ -1165,96 +1271,6 @@ private void BuildSendTab(TabPage page)
             }
         }
 
-        /// <summary>为 TextBox 模拟占位文字（.NET 4.0 无 PlaceholderText）</summary>
-        private static void SetPlaceholder(TextBox tb, string hint)
-        {
-            if (tb == null) return;
-
-            // 用一个标志位区分：true = 当前显示的是占位文字
-            var state = new PlaceholderState { Hint = hint, ShowingHint = true };
-            tb.Tag = state;
-            tb.ForeColor = Color.FromArgb(156, 163, 175);
-            tb.Text = hint;
-
-            tb.GotFocus += (s, e) =>
-            {
-                if (state.ShowingHint)
-                {
-                    state.ShowingHint = false;
-                    tb.Text = "";
-                    tb.ForeColor = Color.Black;
-                }
-            };
-            tb.LostFocus += (s, e) =>
-            {
-                if (tb.Text.Trim().Length == 0)
-                {
-                    state.ShowingHint = true;
-                    tb.Text = hint;
-                    tb.ForeColor = Color.FromArgb(156, 163, 175);
-                }
-            };
-            // 文本被程序改动时（如 SetRealText）同步状态
-            tb.TextChanged += (s, e) =>
-            {
-                if (!state.ShowingHint) return;
-                if (tb.Text != hint) state.ShowingHint = false;
-            };
-        }
-
-        /// <summary>占位符状态（避免用闭包变量导致无法从外部读取）</summary>
-        private class PlaceholderState
-        {
-            public string Hint;
-            public bool ShowingHint;
-        }
-
-        /// <summary>取 TextBox 真实输入（排除占位符）</summary>
-        private static string RealText(TextBox tb)
-        {
-            if (tb == null) return "";
-            var st = tb.Tag as PlaceholderState;
-            if (st != null)
-            {
-                if (st.ShowingHint) return "";
-                return tb.Text ?? "";
-            }
-            return tb.Text ?? "";
-        }
-
-        /// <summary>清空 TextBox 并恢复占位符</summary>
-        private static void ClearWithPlaceholder(TextBox tb, string hint)
-        {
-            if (tb == null) return;
-            var st = tb.Tag as PlaceholderState;
-            if (st != null)
-            {
-                st.ShowingHint = true;
-                tb.Text = hint;
-                tb.ForeColor = Color.FromArgb(156, 163, 175);
-            }
-            else
-            {
-                tb.Text = "";
-            }
-        }
-
-        /// <summary>往占位符输入框写入真实内容</summary>
-        private static void SetRealText(TextBox tb, string text)
-        {
-            if (tb == null) return;
-            var st = tb.Tag as PlaceholderState;
-            if (!string.IsNullOrEmpty(text))
-            {
-                if (st != null) st.ShowingHint = false;
-                tb.Text = text;
-                tb.ForeColor = Color.Black;
-            }
-            else
-            {
-                ClearWithPlaceholder(tb, st != null ? st.Hint : "");
-            }
-        }
 
         /// <summary>
         /// 右侧预览被编辑后，把内容回写到左侧源文本。
@@ -1271,6 +1287,7 @@ private void BuildSendTab(TabPage page)
             try
             {
                 var md = RichTextToMarkdown();
+                md = StripPreviewTitle(md);
                 if (md != null && md != _box.Text)
                 {
                     int sel = _box.SelectionStart;
@@ -1282,6 +1299,39 @@ private void BuildSendTab(TabPage page)
             {
                 _syncingPreview = false;
             }
+        }
+
+        /// <summary>
+        /// 卡片模式下预览开头是彩色标题栏（渲染时加了两个空格的前后留白），
+        /// 它来自标题输入框而不是正文。右侧回写时必须把它剥掉，
+        /// 否则标题会被带进正文，再次渲染后「内容里也有标题」。
+        /// </summary>
+        private string StripPreviewTitle(string md)
+        {
+            if (md == null) return null;
+
+            string title = _txtCardTitle != null ? _txtCardTitle.Text.Trim() : "";
+            if (title.Length == 0) return md;
+
+            // 标题栏在预览里渲染为 "  标题  "（留白 + 加粗字体）。
+            // RichTextToMarkdown 会把加粗转成 **…**，所以回写的开头是
+            // "**  标题  **"（也可能没有留白或没有星号），四种形态都试。
+            string[] heads =
+            {
+                "**  " + title + "  **",
+                "  " + title + "  ",
+                "**" + title + "**",
+                title
+            };
+            foreach (string h in heads)
+            {
+                if (md.StartsWith(h, StringComparison.Ordinal))
+                {
+                    return md.Substring(h.Length).TrimStart('\r', '\n');
+                }
+            }
+
+            return md; // 开头不是标题栏，不动
         }
 
         /// <summary>把 RichTextBox 的富文本反向转成 Markdown</summary>
@@ -1344,28 +1394,6 @@ private void BuildSendTab(TabPage page)
             return s;
         }
 
-        /// <summary>@所有人 同行/换行 下拉的显隐与取值</summary>
-        private bool AtAllInline
-        {
-            get { return _cboAtAllMode != null && _cboAtAllMode.SelectedIndex == 1; }
-        }
-
-        private void UpdateAtAllModeVisibility()
-        {
-            if (_cboAtAllMode != null)
-                _cboAtAllMode.Visible = _chkAll != null && _chkAll.Checked;
-        }
-
-        /// <summary>把 @所有人 同行/换行 存进配置（下次打开记住）</summary>
-        private void SaveAtAllInline()
-        {
-            UpdateAtAllModeVisibility();
-            if (_cfg == null) return;
-            bool now = AtAllInline;
-            if (_cfg.AtAllInline == now) return;
-            _cfg.AtAllInline = now;
-            try { _store.Save(_cfg); } catch { /* 保存失败不影响使用 */ }
-        }
 
         // ==================== 菜单 ====================
 
@@ -1391,6 +1419,8 @@ private void BuildSendTab(TabPage page)
 
             AddMenuItem(menu, "链接", () => InsertLink(), FontStyle.Regular);
             AddMenuItem(menu, "分割线", () => InsertLinePrefix("---"), FontStyle.Regular);
+            menu.Items.Add(new ToolStripSeparator());
+            AddMenuItem(menu, "@所有人", () => InsertAtAll(), FontStyle.Bold);
 
             menu.Show(_btnInsertMenu, new Point(0, _btnInsertMenu.Height));
         }
@@ -1417,20 +1447,6 @@ private void BuildSendTab(TabPage page)
             item.Font = new Font(menu.Font, style);
             item.Click += (s, e) => { try { action(); } catch { } };
             menu.Items.Add(item);
-        }
-
-        /// <summary>创建格式按钮（保留旧方法兼容）</summary>
-        private Button MakeFormatButton(string text, int width, Font font)
-        {
-            return new Button
-            {
-                Text = text,
-                Size = new Size(width, 26),
-                Margin = new Padding(0, 4, 4, 0),
-                FlatStyle = FlatStyle.System,
-                Font = font,
-                Visible = false
-            };
         }
 
         /// <summary>
@@ -1508,6 +1524,22 @@ private void BuildSendTab(TabPage page)
         }
 
         /// <summary>
+        /// 在光标处插入 @所有人 元素：发送时转成真正的提及，
+        /// 提及出现在正文里的位置就是用户插入的位置。
+        /// </summary>
+        private void InsertAtAll()
+        {
+            int start = _box.SelectionStart;
+            const string token = Notifier.AtAllToken + " ";
+            _box.Text = _box.Text.Insert(start, token);
+            _box.SelectionStart = start + token.Length;
+            _box.SelectionLength = 0;
+
+            _box.Focus();
+            RenderLivePreview();
+        }
+
+        /// <summary>
         /// 实时渲染右侧预览。
         /// 卡片模式下按飞书卡片的真实样式渲染（彩色标题栏、加粗、链接、分割线等）。
         /// </summary>
@@ -1517,19 +1549,40 @@ private void BuildSendTab(TabPage page)
 
             bool auto;
             var color = CurrentColor(out auto);
-            string title = _txtCardTitle != null ? RealText(_txtCardTitle) : null;
+            string title = _txtCardTitle != null ? _txtCardTitle.Text : null;
+            var kind = Notifier.PickKind(_box.Text, title);
 
             // 渲染时不要回写源文本（双向绑定的防循环措施）
             _syncingPreview = true;
             try
             {
-                CardRenderer.Render(_livePreview, _box.Text, _chkAll.Checked,
-                    _chkPost.Checked, title, color, auto, AtAllInline);
+                CardRenderer.Render(_livePreview, _box.Text, false,
+                    kind == MessageKind.Card, title, color, auto, false);
             }
             finally
             {
                 _syncingPreview = false;
             }
+
+            // 重渲染会清空控件导致滚动归零：渲染完按左侧位置带回来，长文编辑不再跳顶
+            SyncPreviewScrollFromBox();
+        }
+
+        /// <summary>把当前群的完整 webhook 复制到剪贴板（webhook 掩码可点击）</summary>
+        private void CopyCurrentWebhook()
+        {
+            var name = _cboGroup.SelectedItem as string;
+            var g = name != null ? ConfigStore.FindGroup(_cfg, name) : null;
+            if (g == null || !g.HasWebhook)
+            {
+                SetStatus("该群没有配置 webhook", Theme.Warning);
+                return;
+            }
+
+            if (TrySetClipboard(g.Webhook))
+                SetStatus("webhook 已复制到剪贴板", Theme.Success);
+            else
+                SetStatus("复制失败，剪贴板被占用", Theme.Danger);
         }
 
         private void DoSend()
@@ -1545,11 +1598,11 @@ private void BuildSendTab(TabPage page)
             }
 
             var text = _box.Text;
-            bool isCard = _chkPost.Checked;
-            string cardTitle = _txtCardTitle != null ? RealText(_txtCardTitle).Trim() : "";
+            string cardTitle = _txtCardTitle != null ? _txtCardTitle.Text.Trim() : "";
+            var kind = Notifier.PickKind(text, cardTitle);
 
-            // 卡片模式允许只有标题没正文
-            if (string.IsNullOrWhiteSpace(text) && !(isCard && cardTitle.Length > 0))
+            // 有标题没正文也允许发送（标题-only 卡片）
+            if (string.IsNullOrWhiteSpace(text) && !(kind == MessageKind.Card && cardTitle.Length > 0))
             {
                 SetStatus("内容为空，没发出去", Color.Firebrick);
                 _box.Focus();
@@ -1559,23 +1612,24 @@ private void BuildSendTab(TabPage page)
             var group = ConfigStore.FindGroup(_cfg, name);
             if (group == null) return;
 
-            var kind = isCard ? MessageKind.Card : MessageKind.Text;
-            bool atAll = _chkAll.Checked;
+            // @所有人 是正文里的元素（发送时由 Notifier 转成提及），不再单独开关
+            bool atAll = false;
             bool autoColor;
             var cardColor = CurrentColor(out autoColor);
 
             _busy = true;
             _btnSend.Enabled = false;
+            _btnSend.Text = "发送中…";
             SetStatus("发送中…", Color.DimGray);
 
             // 网络请求放后台线程，避免界面卡死
             var notifier = new Notifier();
             Task.Run(() =>
             {
-                var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor, AtAllInline);
+                var result = notifier.Send(group, text, atAll, kind, cardTitle, cardColor, autoColor, false);
                 string colorName = autoColor ? "" : CardBuilder.ColorDisplayName(cardColor);
                 _logger.RecordSend(group.Name, text, atAll, result, "manual",
-                    isCard ? "card" : "text", cardTitle, colorName);
+                    kind == MessageKind.Card ? "card" : "text", cardTitle, colorName);
                 return result;
             }).ContinueWith(t =>
             {
@@ -1598,9 +1652,13 @@ private void BuildSendTab(TabPage page)
                         // 发送成功后留在窗口：清空输入框并聚焦，方便接着发下一条。
                         // 不自动关窗——用户经常要连发多条。
                         _box.Clear();
-                        ClearWithPlaceholder(_txtCardTitle, "例如：部署完成 / 周会提醒");
+                        _txtCardTitle.Clear();
                         _box.Focus();
                         RenderLivePreview();
+
+                        // 草稿随发送清掉，下次启动不再恢复已发出的内容
+                        _cfg.Draft = null;
+                        try { _store.Save(_cfg); } catch { }
                     }
                     else
                     {
@@ -1611,6 +1669,7 @@ private void BuildSendTab(TabPage page)
                 finally
                 {
                     _btnSend.Enabled = true;
+                    _btnSend.Text = "发送";
                     _busy = false;
                 }
             }, TaskScheduler.FromCurrentSynchronizationContext());
@@ -1639,7 +1698,7 @@ private void BuildSendTab(TabPage page)
                 return;
             }
 
-            using (var dlg = new ScheduleForm(name, text, _chkAll.Checked))
+            using (var dlg = new ScheduleForm(name, text, false))
             {
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
                 if (dlg.CreatedJob == null) return;
@@ -1803,47 +1862,16 @@ private void BuildSendTab(TabPage page)
             }
         }
 
-        /// <summary>打开常用语管理窗口</summary>
-        private void OpenTemplateManager()
-        {
-            using (var dlg = new TemplateManagerForm(_cfg.Templates))
-            {
-                if (dlg.ShowDialog(this) != DialogResult.OK || dlg.Result == null) return;
-
-                _cfg.Templates = dlg.Result;
-                try
-                {
-                    _store.Save(_cfg);
-                    RefreshTemplateCombo();
-                    SetStatus("常用语已更新（" + _cfg.Templates.Count + " 条）", Color.ForestGreen);
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show("保存失败：" + ex.Message, "错误",
-                        MessageBoxButtons.OK, MessageBoxIcon.Error);
-                }
-            }
-        }
-
+        /// <summary>跳到群管理页签</summary>
         private void OpenGroupManager()
         {
-            using (var mgr = new GroupManagerForm(_cfg))
-            {
-                mgr.ShowDialog(this);
-                if (mgr.Changed)
-                {
-                    try
-                    {
-                        _store.Save(_cfg);
-                    }
-                    catch (Exception ex)
-                    {
-                        MessageBox.Show("保存配置失败：" + ex.Message,
-                            "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    }
-                    RefreshGroupCombo();
-                }
-            }
+            if (_tabs != null && _tabs.TabPages.Count > 3) _tabs.SelectedIndex = 3;
+        }
+
+        /// <summary>跳到常用语页签</summary>
+        private void OpenTemplateManager()
+        {
+            if (_tabs != null && _tabs.TabPages.Count > 4) _tabs.SelectedIndex = 4;
         }
     }
 }

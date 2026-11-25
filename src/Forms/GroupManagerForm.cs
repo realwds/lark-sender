@@ -15,6 +15,12 @@ namespace LarkSender.Forms
         /// <summary>是否发生过修改（由调用方决定是否落盘）</summary>
         public bool Changed { get; private set; }
 
+        /// <summary>
+        /// 数据变化回调（嵌入页签时由主窗口挂接：保存配置 + 刷新发消息页的群下拉）。
+        /// 嵌入模式下即时生效，不再依赖对话框关闭时机。
+        /// </summary>
+        public Action OnDataChanged;
+
         public GroupManagerForm(AppConfig cfg)
         {
             _cfg = cfg;
@@ -135,6 +141,7 @@ namespace LarkSender.Forms
                 {
                     _cfg.Groups.Add(dlg.Result);
                     Changed = true;
+                    NotifyChanged();
                     RefreshList();
                 }
             }
@@ -163,6 +170,7 @@ namespace LarkSender.Forms
                     }
 
                     Changed = true;
+                    NotifyChanged();
                     RefreshList();
                 }
             }
@@ -187,7 +195,15 @@ namespace LarkSender.Forms
 
             _cfg.Groups.Remove(g);
             Changed = true;
+            NotifyChanged();
             RefreshList();
+        }
+
+        /// <summary>触发数据变更回调（嵌入页签时主窗口即时保存并刷新 UI）</summary>
+        private void NotifyChanged()
+        {
+            var cb = OnDataChanged;
+            if (cb != null) { try { cb(); } catch { } }
         }
 
         /// <summary>发一条测试消息，验证 webhook / 签名是否正确</summary>

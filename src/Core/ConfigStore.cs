@@ -145,6 +145,25 @@ namespace LarkSender.Core
             // v3 新增：@所有人 是否同行
             cfg.AtAllInline = Json.GetBool(root, "atAllInline", false);
 
+            // v3 追加（向后兼容）：窗口记忆 + 草稿，旧文件缺字段时用默认值
+            cfg.WindowLeft = Json.GetInt(root, "windowLeft", -1);
+            cfg.WindowTop = Json.GetInt(root, "windowTop", -1);
+            cfg.WindowWidth = Json.GetInt(root, "windowWidth", 0);
+            cfg.WindowHeight = Json.GetInt(root, "windowHeight", 0);
+            cfg.EditorSplitPercent = Json.GetInt(root, "editorSplitPercent", -1);
+            var draft = Json.GetObject(root, "draft");
+            if (draft != null)
+            {
+                var d = new DraftConfig
+                {
+                    Body = Json.GetString(draft, "body", ""),
+                    Title = Json.GetString(draft, "title", ""),
+                    Color = Json.GetString(draft, "color", ""),
+                    IsCard = Json.GetBool(draft, "isCard", false)
+                };
+                if (!d.IsEmpty) cfg.Draft = d;
+            }
+
             return cfg;
         }
 
@@ -208,14 +227,30 @@ namespace LarkSender.Core
                 });
             }
 
-            return new Dictionary<string, object>
+            var top = new Dictionary<string, object>
             {
                 { "version", AppConfig.CurrentVersion },
                 { "groups", groups },
                 { "schedules", schedules },
                 { "templates", templates },
-                { "atAllInline", cfg.AtAllInline }
+                { "atAllInline", cfg.AtAllInline },
+                { "windowLeft", cfg.WindowLeft },
+                { "windowTop", cfg.WindowTop },
+                { "windowWidth", cfg.WindowWidth },
+                { "windowHeight", cfg.WindowHeight },
+                { "editorSplitPercent", cfg.EditorSplitPercent }
             };
+            if (cfg.Draft != null && !cfg.Draft.IsEmpty)
+            {
+                top["draft"] = new Dictionary<string, object>
+                {
+                    { "body", cfg.Draft.Body ?? "" },
+                    { "title", cfg.Draft.Title ?? "" },
+                    { "color", cfg.Draft.Color ?? "" },
+                    { "isCard", cfg.Draft.IsCard }
+                };
+            }
+            return top;
         }
 
         private static string KindToString(ScheduleKind k)

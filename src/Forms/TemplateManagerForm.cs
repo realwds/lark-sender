@@ -10,8 +10,8 @@ namespace LarkSender.Forms
     /// <summary>
     /// 常用语管理：增删改、排序。
     ///
-    /// 现在每条常用语保存完整形态（正文 / 卡片标题 / 颜色 / 是否卡片 / 是否@所有人），
-    /// 而不只是正文——否则富文本存进去再取出来就丢格式。
+    /// 嵌入主窗口页签，控件全部走系统原生样式；每次增删改/排序即时回调落盘，
+    /// 不再有「保存并关闭/取消」。
     /// </summary>
     public class TemplateManagerForm : Form
     {
@@ -24,8 +24,13 @@ namespace LarkSender.Forms
         private CheckBox _chkCard;
         private CheckBox _chkAtAll;
 
-        /// <summary>保存后的结果；取消时为 null</summary>
+        /// <summary>保存后的结果（保留字段兼容旧用法；嵌入页签时不再使用）</summary>
         public List<TemplateConfig> Result { get; private set; }
+
+        /// <summary>
+        /// 数据变化回调（嵌入页签时由主窗口挂接：每次增删改/排序后即时落盘并刷新下拉）。
+        /// </summary>
+        public Action<List<TemplateConfig>> OnDataChanged;
 
         public TemplateManagerForm(List<TemplateConfig> templates)
         {
@@ -53,20 +58,17 @@ namespace LarkSender.Forms
 
         private void InitUi()
         {
+            // 嵌入页签，与其他页签同一套原生控件风格：默认字体/配色、系统边框
             Text = "管理常用语";
-            Size = new Size(760, 560);
-            MinimumSize = new Size(640, 480);
-            StartPosition = FormStartPosition.CenterParent;
-            Theme.ApplyForm(this);
-            AppIcon.Apply(this);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            Font = Theme.FontBody;
 
             var root = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
                 RowCount = 2,
-                Padding = new Padding(14),
-                BackColor = Theme.Bg
+                Padding = new Padding(10)
             };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220f));
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -74,30 +76,39 @@ namespace LarkSender.Forms
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             // 左侧列表
-            var leftCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 12, 10) };
+            var leftBox = new GroupBox
+            {
+                Text = "常用语",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(6),
+                Margin = new Padding(0, 0, 10, 8)
+            };
             _lb = new ListBox
             {
                 Dock = DockStyle.Fill,
                 IntegralHeight = false,
-                BorderStyle = BorderStyle.None,
+                BorderStyle = BorderStyle.FixedSingle,
                 Font = Theme.FontBody,
                 Margin = new Padding(0)
             };
-            var lbHost = new Panel { Dock = DockStyle.Fill, Padding = new Padding(8) };
-            lbHost.Controls.Add(_lb);
-            leftCard.Controls.Add(lbHost);
             _lb.SelectedIndexChanged += (s, e) => LoadSelected();
-            root.Controls.Add(leftCard, 0, 0);
+            leftBox.Controls.Add(_lb);
+            root.Controls.Add(leftBox, 0, 0);
 
             // 右侧编辑区
-            var rightCard = new CardPanel { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10), Padding = new Padding(14) };
+            var rightBox = new GroupBox
+            {
+                Text = "编辑",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10),
+                Margin = new Padding(0, 0, 0, 8)
+            };
 
             var edit = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 5,
-                BackColor = Theme.Surface
+                RowCount = 5
             };
             edit.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             edit.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
@@ -116,10 +127,10 @@ namespace LarkSender.Forms
                 WrapContents = false,
                 Margin = new Padding(0, 0, 0, 8)
             };
-            _chkCard = new CheckBox { Text = "卡片消息", AutoSize = true, ForeColor = Theme.TextSecondary, Margin = new Padding(0, 4, 16, 0) };
+            _chkCard = new CheckBox { Text = "卡片消息", AutoSize = true, Margin = new Padding(0, 4, 16, 0) };
             _chkCard.CheckedChanged += (s, e) => UpdateTitleEnabled();
             optRow.Controls.Add(_chkCard);
-            _chkAtAll = new CheckBox { Text = "所有人", AutoSize = true, ForeColor = Theme.TextSecondary, Margin = new Padding(0, 4, 0, 0) };
+            _chkAtAll = new CheckBox { Text = "所有人", AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
             optRow.Controls.Add(_chkAtAll);
             edit.Controls.Add(optRow, 1, 0);
 
@@ -134,7 +145,6 @@ namespace LarkSender.Forms
             {
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Width = 100,
-                FlatStyle = FlatStyle.Flat,
                 Margin = new Padding(0, 4, 0, 8),
                 Anchor = AnchorStyles.Left
             };
@@ -156,8 +166,8 @@ namespace LarkSender.Forms
             };
             edit.Controls.Add(_txtBody, 1, 4);
 
-            rightCard.Controls.Add(edit);
-            root.Controls.Add(rightCard, 1, 0);
+            rightBox.Controls.Add(edit);
+            root.Controls.Add(rightBox, 1, 0);
 
             // 底部按钮
             var bottom = new FlowLayoutPanel
@@ -167,8 +177,7 @@ namespace LarkSender.Forms
                 WrapContents = false,
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Margin = new Padding(0),
-                BackColor = Theme.Bg
+                Margin = new Padding(0)
             };
 
             var btnAdd = MakeBtn("新增", 80);
@@ -191,23 +200,22 @@ namespace LarkSender.Forms
             btnDown.Click += (s, e) => MoveSelected(1);
             bottom.Controls.Add(btnDown);
 
-            var spacer = new Panel { Width = 20, Height = 1 };
+            var spacer = new Panel { Width = 12, Height = 1 };
             bottom.Controls.Add(spacer);
 
-            var btnOk = new Button { Text = "保存并关闭", Size = new Size(110, 34), Margin = new Padding(0, 0, 8, 0) };
-            Theme.StylePrimary(btnOk);
-            btnOk.Click += (s, e) => Commit();
-            bottom.Controls.Add(btnOk);
-
-            var btnCancel = new Button { Text = "取消", Size = new Size(80, 34), DialogResult = DialogResult.Cancel };
-            Theme.StyleSecondary(btnCancel);
-            bottom.Controls.Add(btnCancel);
+            // 嵌入页签后即时保存，不再需要「保存并关闭/取消」
+            bottom.Controls.Add(new Label
+            {
+                AutoSize = true,
+                ForeColor = Color.DimGray,
+                Text = "新增 / 保存修改 / 删除 / 排序即时生效",
+                Margin = new Padding(0, 9, 0, 0)
+            });
 
             root.Controls.Add(bottom, 0, 1);
             root.SetColumnSpan(bottom, 2);
 
             Controls.Add(root);
-            CancelButton = btnCancel;
         }
 
         private static Label MakeLabel(string text)
@@ -217,16 +225,13 @@ namespace LarkSender.Forms
                 Text = text,
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
-                ForeColor = Theme.TextSecondary,
                 Margin = new Padding(0, 7, 10, 0)
             };
         }
 
         private static Button MakeBtn(string text, int width)
         {
-            var b = new Button { Text = text, Size = new Size(width, 32), Margin = new Padding(0, 0, 6, 0) };
-            Theme.StyleSecondary(b);
-            return b;
+            return new Button { Text = text, Size = new Size(width, 32), Margin = new Padding(0, 0, 6, 0) };
         }
 
         private void UpdateTitleEnabled()
@@ -234,8 +239,6 @@ namespace LarkSender.Forms
             bool on = _chkCard.Checked;
             _txtTitle.Enabled = on;
             _cboColor.Enabled = on;
-            _txtTitle.BackColor = on ? Theme.Surface : Theme.BorderSoft;
-            _cboColor.BackColor = on ? Theme.Surface : Theme.BorderSoft;
         }
 
         private void RefreshList(int selectIndex = -1)
@@ -319,6 +322,7 @@ namespace LarkSender.Forms
 
             _items.Add(t);
             RefreshList(_items.Count - 1);
+            NotifyChanged();
         }
 
         private void UpdateSelected()
@@ -341,6 +345,7 @@ namespace LarkSender.Forms
 
             _items[i] = t;
             RefreshList(i);
+            NotifyChanged();
         }
 
         private void DeleteSelected()
@@ -364,6 +369,7 @@ namespace LarkSender.Forms
             int next = i < _items.Count ? i : _items.Count - 1;
             RefreshList(next);
             if (next < 0) LoadSelected();
+            NotifyChanged();
         }
 
         private void MoveSelected(int delta)
@@ -377,13 +383,17 @@ namespace LarkSender.Forms
             _items[i] = _items[j];
             _items[j] = tmp;
             RefreshList(j);
+            NotifyChanged();
         }
 
-        private void Commit()
+        /// <summary>触发数据变更回调（嵌入页签时主窗口即时保存并刷新下拉）</summary>
+        private void NotifyChanged()
         {
-            Result = new List<TemplateConfig>(_items);
-            DialogResult = DialogResult.OK;
-            Close();
+            var cb = OnDataChanged;
+            if (cb != null)
+            {
+                try { cb(new List<TemplateConfig>(_items)); } catch { }
+            }
         }
     }
 }

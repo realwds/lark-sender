@@ -114,6 +114,16 @@ namespace LarkSender.Models
         /// <summary>@所有人 是否与文字同行（默认换行）</summary>
         public bool AtAllInline { get; set; }
 
+        /// <summary>窗口位置/尺寸记忆，-1 或 0 表示未记录</summary>
+        public int WindowLeft { get; set; }
+        public int WindowTop { get; set; }
+        public int WindowWidth { get; set; }
+        public int WindowHeight { get; set; }
+        /// <summary>编辑区左右分栏比例（10~90 的百分数），-1 未记录</summary>
+        public int EditorSplitPercent { get; set; }
+        /// <summary>关闭时未发送的内容草稿，下次启动恢复</summary>
+        public DraftConfig Draft { get; set; }
+
         public const int CurrentVersion = 3;
 
         public AppConfig()
@@ -123,6 +133,33 @@ namespace LarkSender.Models
             Schedules = new List<ScheduleConfig>();
             Templates = new List<TemplateConfig>();
             AtAllInline = false;
+            WindowLeft = -1;
+            WindowTop = -1;
+            WindowWidth = 0;
+            WindowHeight = 0;
+            EditorSplitPercent = -1;
+        }
+    }
+
+    /// <summary>发消息页草稿：关闭窗口时未发送的正文与卡片设置</summary>
+    public class DraftConfig
+    {
+        public string Body { get; set; }
+        public string Title { get; set; }
+        public string Color { get; set; }
+        public bool IsCard { get; set; }
+
+        public DraftConfig()
+        {
+            Body = "";
+            Title = "";
+            Color = "";
+        }
+
+        /// <summary>正文和标题都为空视为无草稿</summary>
+        public bool IsEmpty
+        {
+            get { return string.IsNullOrWhiteSpace(Body) && string.IsNullOrWhiteSpace(Title); }
         }
     }
 

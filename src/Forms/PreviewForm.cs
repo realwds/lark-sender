@@ -49,8 +49,8 @@ namespace LarkSender.Forms
         private void InitUi(string payload)
         {
             Text = "发送预览";
-            Size = new Size(1180, 680);
-            MinimumSize = new Size(860, 480);
+            Size = new Size(900, 560);
+            MinimumSize = new Size(700, 420);
             StartPosition = FormStartPosition.CenterParent;
             Font = new Font("Microsoft YaHei UI", 9f);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -74,26 +74,27 @@ namespace LarkSender.Forms
                     : "左侧是纯文本效果；右侧是实际发送的 JSON"
             });
 
-            // 底部按钮
-            var btnBar = new Panel { Dock = DockStyle.Bottom, Height = 46, Padding = new Padding(12, 7, 12, 7) };
+            // 底部按钮：统一高度，靠右垂直居中
+            var btnBar = new Panel { Dock = DockStyle.Bottom, Height = 52, Padding = new Padding(12, 11, 12, 11) };
             var btnRow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Right,
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
                 AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(0)
             };
 
-            var btnCopyJson = new Button { Text = "复制 JSON", Size = new Size(100, 32), Margin = new Padding(0, 0, 8, 0) };
+            var btnCopyJson = new Button { Text = "复制 JSON", Size = new Size(100, 30), Margin = new Padding(0, 0, 8, 0) };
             btnCopyJson.Click += (s, e) => CopyToClipboard(_json.Text, "JSON");
             btnRow.Controls.Add(btnCopyJson);
 
-            var btnCopyText = new Button { Text = "复制原文", Size = new Size(90, 32), Margin = new Padding(0, 0, 8, 0) };
+            var btnCopyText = new Button { Text = "复制原文", Size = new Size(90, 30), Margin = new Padding(0, 0, 8, 0) };
             btnCopyText.Click += (s, e) => CopyToClipboard(_text, "原文");
             btnRow.Controls.Add(btnCopyText);
 
-            var btnClose = new Button { Text = "关闭", Size = new Size(80, 32), DialogResult = DialogResult.OK };
+            var btnClose = new Button { Text = "关闭", Size = new Size(80, 30), Margin = new Padding(0), DialogResult = DialogResult.OK };
             btnRow.Controls.Add(btnClose);
             btnBar.Controls.Add(btnRow);
 
@@ -206,7 +207,8 @@ namespace LarkSender.Forms
             try
             {
                 var obj = Json.Parse(json);
-                return Json.SerializeIndented(obj);
+                // TextBox（Win32 EDIT）只把 CRLF 当换行，单独的 \n 会被连在一行里
+                return Json.SerializeIndented(obj).Replace("\n", "\r\n");
             }
             catch
             {

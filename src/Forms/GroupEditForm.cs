@@ -127,6 +127,7 @@ namespace LarkSender.Forms
             return new TextBox
             {
                 Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
                 Margin = new Padding(0, 5, 0, 0)
             };
         }

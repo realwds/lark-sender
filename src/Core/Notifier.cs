@@ -33,6 +33,9 @@ namespace LarkSender.Core
         /// <summary>可注入的休眠函数，测试时可替换为空操作</summary>
         public Action<int> Sleep { get; set; }
 
+        /// <summary>正文里的 @所有人 词元：发送时转成真正的提及（@位置即插入位置）</summary>
+        public const string AtAllToken = "@所有人";
+
         public Notifier()
         {
             MaxAttempts = 3;
@@ -226,6 +229,36 @@ namespace LarkSender.Core
 
         // ==================== 消息构造 ====================
 
+        /// <summary>
+        /// 根据正文与标题自动判断消息类型：
+        /// 填了标题、或正文用了富文本语法 → 卡片；纯文字 → 纯文本。
+        /// 界面不再提供「卡片消息」开关。
+        /// </summary>
+        public static MessageKind PickKind(string text, string cardTitle)
+        {
+            if (!string.IsNullOrWhiteSpace(cardTitle)) return MessageKind.Card;
+            return HasRichSyntax(text) ? MessageKind.Card : MessageKind.Text;
+        }
+
+        /// <summary>正文是否用了 Markdown 富文本语法（值得按卡片发送）</summary>
+        private static bool HasRichSyntax(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            var lines = text.Replace("\r\n", "\n").Split('\n');
+            foreach (var raw in lines)
+            {
+                var t = raw.Trim();
+                if (t.Length == 0) continue;
+                if (t.StartsWith("#")) return true;                                  // 标题
+                if (t == "---") return true;                                         // 分割线
+                if (t.StartsWith("> ")) return true;                                 // 引用
+                if (t.StartsWith("- ") || t.StartsWith("* ")) return true;           // 无序列表
+                if (System.Text.RegularExpressions.Regex.IsMatch(t, @"^\d+\.\s")) return true; // 有序列表
+            }
+            return text.Contains("**") || text.Contains("~~") ||
+                   text.Contains("](") || text.Contains("`");
+        }
+
         /// <summary>构造发送用的 JSON</summary>
         public string BuildPayload(string text, bool atAll, string secret, MessageKind kind)
         {
@@ -245,23 +278,35 @@ namespace LarkSender.Core
             string cardTitle, CardBuilder.HeaderColor color, bool autoColor, bool atAllInline)
         {
             var payload = new Dictionary<string, object>();
+            var body = text ?? "";
+
+            // @所有人 作为可插入元素：出现在正文里就换成真正的提及标记
+            bool hasToken = body.Contains(AtAllToken);
+            if (hasToken)
+            {
+                body = kind == MessageKind.Card
+                    ? body.Replace(AtAllToken, "<at id=all></at>")
+                    : body.Replace(AtAllToken, "<at user_id=\"all\">所有人</at>");
+                // 提及已在正文里，避免再额外叠加一个
+                atAll = false;
+            }
 
             if (kind == MessageKind.Card)
             {
                 payload["msg_type"] = "interactive";
-                payload["card"] = CardBuilder.BuildCardWithTitle(cardTitle, text, atAll, color, autoColor, atAllInline);
+                payload["card"] = CardBuilder.BuildCardWithTitle(cardTitle, body, atAll, color, autoColor, atAllInline);
             }
             else
             {
                 payload["msg_type"] = "text";
-                var body = text ?? "";
+                var content = body;
                 if (atAll)
                 {
-                    body = atAllInline
-                        ? "<at user_id=\"all\">所有人</at> " + body
-                        : "<at user_id=\"all\">所有人</at>\n" + body;
+                    content = atAllInline
+                        ? "<at user_id=\"all\">所有人</at> " + content
+                        : "<at user_id=\"all\">所有人</at>\n" + content;
                 }
-                payload["content"] = new Dictionary<string, object> { { "text", body } };
+                payload["content"] = new Dictionary<string, object> { { "text", content } };
             }
 
             if (!string.IsNullOrEmpty(secret))

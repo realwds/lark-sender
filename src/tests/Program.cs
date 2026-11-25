@@ -58,6 +58,17 @@ namespace LarkSender.Tests
             else { _failed++; _failures.Add(what); Console.WriteLine("  ✗ " + what); }
         }
 
+        private static int CountOccurrences(string s, string sub)
+        {
+            int count = 0, pos = 0;
+            while ((pos = s.IndexOf(sub, pos, StringComparison.Ordinal)) >= 0)
+            {
+                count++;
+                pos += sub.Length;
+            }
+            return count;
+        }
+
         private static void Eq<T>(T actual, T expected, string what)
         {
             bool same = EqualityComparer<T>.Default.Equals(actual, expected);
@@ -238,6 +249,56 @@ namespace LarkSender.Tests
             var o5 = Json.ParseObject(p5); // 能解析即说明转义正确
             var c5 = Json.GetObject(o5, "content");
             Eq(Json.GetString(c5, "text", ""), tricky, "特殊字符往返正确");
+
+            Section("JSON 格式化（预览窗 PrettyJson 同路径）");
+
+            // 模拟 PreviewForm.PrettyJson：payload 是紧凑单行，解析后重新缩进
+            string pretty1 = Json.SerializeIndented(Json.Parse(p4));
+            Ok(pretty1.Contains("\n"), "卡片 payload 格式化后换行");
+            Ok(pretty1.Contains("  \"msg_type\""), "卡片 payload 有缩进");
+
+            string pretty2 = Json.SerializeIndented(Json.Parse(p3));
+            Ok(pretty2.Contains("\n"), "带签名 payload 格式化后换行");
+
+            // 长正文卡片也必须能格式化（嵌套 elements 数组）
+            string p6 = n.BuildPayload("**加粗**\n- 项目一\n- 项目二\n---\n页脚", true, "sec",
+                MessageKind.Card, "部署完成 v4.0", CardBuilder.HeaderColor.Green, false);
+            string pretty3 = Json.SerializeIndented(Json.Parse(p6));
+            Ok(pretty3.Contains("\n    "), "长卡片 payload 多级缩进");
+            Eq(pretty3, Json.SerializeIndented(Json.Parse(pretty3)), "格式化幂等");
+
+            Section("自动卡片与 @所有人 词元");
+
+            // PickKind：纯文字 → 纯文本
+            Eq((int)Notifier.PickKind("普通一句话", ""), (int)MessageKind.Text, "纯文字走纯文本");
+            // PickKind：有标题 → 卡片
+            Eq((int)Notifier.PickKind("普通一句话", "部署完成"), (int)MessageKind.Card, "有标题走卡片");
+            // PickKind：富文本语法 → 卡片
+            Eq((int)Notifier.PickKind("**加粗** 正文", ""), (int)MessageKind.Card, "加粗走卡片");
+            Eq((int)Notifier.PickKind("- 项目一\n- 项目二", ""), (int)MessageKind.Card, "列表走卡片");
+            Eq((int)Notifier.PickKind("1. 第一\n2. 第二", ""), (int)MessageKind.Card, "有序列表走卡片");
+            Eq((int)Notifier.PickKind("# 标题\n正文", ""), (int)MessageKind.Card, "井号标题走卡片");
+
+            // @所有人 词元：文本模式转成内联提及
+            string pa = n.BuildPayload("注意 @所有人 看一下", false, null, MessageKind.Text);
+            Ok(pa.Contains("<at user_id=\\\"all\\\">"), "文本模式词元转提及");
+            var ca = Json.ParseObject(pa);
+            string sa = Json.GetString(Json.GetObject(ca, "content"), "text", "");
+            Ok(!sa.Contains("@所有人"), "文本模式词元已替换（不残留明文）");
+
+            // @所有人 词元：卡片模式转 <at id=all>
+            string pb = n.BuildPayload("通知 @所有人 开会", false, null, MessageKind.Card, "周会提醒", CardBuilder.HeaderColor.Blue, true);
+            Ok(pb.Contains("<at id=all>"), "卡片模式词元转提及");
+
+            // 词元存在时不再叠加额外的 atAll
+            var cb = Json.ParseObject(pb);
+            string cardJson = Json.Serialize(cb);
+            int atCount = CountOccurrences(cardJson, "<at");
+            Eq(atCount, 1, "词元与 atAll 参数不叠加");
+
+            // atAll 参数（CLI /atall）行为保持
+            string pc = n.BuildPayload("hi", true, null, MessageKind.Text);
+            Ok(pc.Contains("<at user_id=\\\"all\\\">"), "atAll 参数仍然生效");
         }
 
         // ==================== 配置 ====================
@@ -271,6 +332,30 @@ namespace LarkSender.Tests
                 Eq(loaded.Groups[0].AtAll, true, "atAll 往返一致");
                 Eq(loaded.Templates.Count, 1, "常用语数量往返一致");
                 Eq(loaded.Version, AppConfig.CurrentVersion, "版本号写入当前版本");
+
+                // 窗口记忆与草稿（新增字段）往返
+                cfg.WindowLeft = 120;
+                cfg.WindowTop = 80;
+                cfg.WindowWidth = 980;
+                cfg.WindowHeight = 700;
+                cfg.EditorSplitPercent = 45;
+                cfg.Draft = new DraftConfig { Body = "**草稿**正文", Title = "未发送", Color = "绿", IsCard = true };
+                store.Save(cfg);
+                var loaded2 = store.Load();
+                Eq(loaded2.WindowLeft, 120, "窗口 Left 往返一致");
+                Eq(loaded2.WindowTop, 80, "窗口 Top 往返一致");
+                Eq(loaded2.WindowWidth, 980, "窗口宽往返一致");
+                Eq(loaded2.EditorSplitPercent, 45, "分栏比例往返一致");
+                Ok(loaded2.Draft != null && loaded2.Draft.Body == "**草稿**正文", "草稿正文往返一致");
+                Ok(loaded2.Draft != null && loaded2.Draft.IsCard, "草稿卡片标志往返一致");
+                Ok(loaded2.Draft != null && loaded2.Draft.Color == "绿", "草稿颜色往返一致");
+                Eq(loaded2.Templates.Count, 1, "草稿字段不挤占其他数据");
+
+                // 空草稿不写入配置
+                cfg.Draft = new DraftConfig { Body = "", Title = "" };
+                store.Save(cfg);
+                var loaded3 = store.Load();
+                Ok(loaded3.Draft == null, "空草稿不落盘");
 
                 // 查找
                 Ok(ConfigStore.FindGroup(loaded, "测试群") != null, "按名称找到群");

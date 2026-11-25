@@ -77,6 +77,7 @@ namespace LarkSender.Forms
                             LinkColor, Bold(rtb.Font), false);
                     }
                     Append(rtb, markdown ?? "", TextPrimary, rtb.Font, false);
+                    HighlightAtAllTokens(rtb);
                     return;
                 }
 
@@ -96,11 +97,33 @@ namespace LarkSender.Forms
                 }
 
                 RenderCardPreview(rtb, parsed);
+                HighlightAtAllTokens(rtb);
             }
             finally
             {
                 rtb.ResumeLayout();
             }
+        }
+
+        /// <summary>把正文里的 @所有人 词元高亮成蓝色加粗，让“这是个提及元素”一目了然</summary>
+        private static void HighlightAtAllTokens(RichTextBox rtb)
+        {
+            const string token = "@所有人";
+            // 注意：不能用 RichTextBox.Find(token, start)——当 start 到达文本末尾附近时
+            // 它会反复返回同一命中位置，这里变成死循环（实测卡死 UI）。
+            // 改用 Text + IndexOf 定位，Select 只做选区。
+            string text = rtb.Text;
+            int pos = 0;
+            while (pos + token.Length <= text.Length)
+            {
+                int hit = text.IndexOf(token, pos, StringComparison.Ordinal);
+                if (hit < 0) break;
+                rtb.Select(hit, token.Length);
+                rtb.SelectionColor = LinkColor;
+                rtb.SelectionFont = new Font(rtb.Font, FontStyle.Bold);
+                pos = hit + token.Length;
+            }
+            rtb.Select(0, 0);
         }
 
         private static CardBuilder.HeaderColor GuessColorPublic(string title)
